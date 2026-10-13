@@ -641,6 +641,26 @@ test('Discord settings are profile-scoped and test notifications require an expl
   assert.equal(messages.length, 2);
 });
 
+test('popup saves a profile link without userid after lookup and preserves the old profile on failure', async () => {
+  const app = await racePopup();
+  const get = app.document.getElementById;
+  const resolvedId = '12345678-1234-1234-1234-123456789abc';
+  app.context.AbortSignal = AbortSignal;
+  app.context.fetch = async (url) => {
+    assert.equal(url, 'https://learn.microsoft.com/api/profiles/teammate-1234');
+    return { ok: true, json: async () => ({ userId: resolvedId }) };
+  };
+  get('profile-input').value = 'https://learn.microsoft.com/en-us/users/teammate-1234/';
+  await get('profile-form').handlers.submit({ preventDefault() {} });
+  assert.equal(app.saved.supportAuthorId, resolvedId);
+  assert.equal(get('profile-label').textContent, resolvedId);
+  app.context.fetch = async () => { throw new Error('offline'); };
+  get('profile-input').value = 'https://learn.microsoft.com/en-us/users/another-teammate/';
+  await get('profile-form').handlers.submit({ preventDefault() {} });
+  assert.equal(app.saved.supportAuthorId, resolvedId);
+  assert.match(get('message').textContent, /Try again while online/);
+});
+
 test('popup keeps an intrinsic width rather than shrinking to its initial viewport', () => {
   const css = source('popup.css');
   assert.match(css, /html\s*\{[^}]*min-width:\s*560px/);

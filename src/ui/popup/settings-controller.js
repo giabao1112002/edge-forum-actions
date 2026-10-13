@@ -1,4 +1,4 @@
-function createSettingsController({ document, chrome, state, parseSupportProfile, loadSettings, casesKey, renderCases, renderThread }) {
+function createSettingsController({ document, chrome, state, resolveSupportProfile, loadSettings, casesKey, renderCases, renderThread }) {
   const reminderInput = document.getElementById('desktop-reminders');
   async function loadDiscord() {
     const profileId = state.supportAuthorId;
@@ -47,10 +47,11 @@ function createSettingsController({ document, chrome, state, parseSupportProfile
   });
   document.getElementById('profile-form').addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (state.profileLoading) return;
     try {
-      const nextId = parseSupportProfile(document.getElementById('profile-input').value);
-      if (state.profileLoading) return;
       state.profileLoading = true;
+      document.getElementById('message').textContent = 'Checking Microsoft Learn profile...';
+      const nextId = await resolveSupportProfile(document.getElementById('profile-input').value);
       ++state.threadRequest;
       document.getElementById('thread').hidden = true;
       document.getElementById('save-case').disabled = true;
