@@ -1,0 +1,5 @@
+﻿customer-test-starter/target/
+.env
+.env.*
+!.env.example
+*.log

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forum Action Planner</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header class="app-header">
+      <div><p class="eyebrow">MICROSOFT LEARN Q&A</p><h1>Forum Action Planner</h1></div>
+      <span class="mode-badge">Read-only</span>
+    </header>
+    <nav class="tabbar" role="tablist" aria-label="Planner sections">
+      <button id="tab-thread" type="button" role="tab" aria-controls="panel-thread" aria-selected="true">Thread</button>
+      <button id="tab-today" type="button" role="tab" aria-controls="today-section" aria-selected="false" tabindex="-1">Today</button>
+      <button id="tab-cases" type="button" role="tab" aria-controls="saved-section" aria-selected="false" tabindex="-1">My Cases</button>
+      <button id="tab-calendar" type="button" role="tab" aria-controls="calendar-section" aria-selected="false" tabindex="-1">Calendar</button>
+      <button id="tab-settings" type="button" role="tab" aria-controls="panel-settings" aria-selected="false" tabindex="-1">Settings</button>
+    </nav>
+    <p id="message" role="status" aria-live="polite"></p>
+    <div id="panel-thread" role="tabpanel" aria-labelledby="tab-thread" tabindex="0">
+    <form id="url-form" class="panel thread-search">
+      <label for="thread-url">Read a thread</label>
+      <div class="row"><input id="thread-url" type="url" placeholder="Paste a Microsoft Learn Q&A link" required><button type="submit">Read</button></div>
+    </form>
+    <section id="thread" class="panel" hidden aria-labelledby="thread-heading">
+      <div class="section-heading"><h2 id="thread-heading">Current thread</h2><span class="section-note">Next action</span></div>
+      <h3 id="title"></h3>
+      <div class="thread-actions"><button type="button" id="save-case">Save to My Cases</button><button type="button" id="refresh-thread" class="secondary">Refresh thread</button></div>
+      <p id="stage" class="stage"></p>
+      <article id="result" aria-live="polite"></article>
+      <details class="disclosure" id="activity-section">
+        <summary>Activity &amp; corrections</summary>
+        <p class="hint">Only your conversation with the question author counts. Comment types are inferred; correct them here if needed.</p>
+        <p id="excluded" class="hint"></p>
+        <div id="entries"></div>
+      </details>
+    </section>
+    </div>
+    <section id="dashboard" aria-label="Saved case dashboard">
+      <section id="today-section" class="panel" role="tabpanel" aria-labelledby="tab-today" tabindex="0" hidden>
+        <div class="section-heading"><h2 id="today-heading">Today</h2><span class="section-note">Replies &amp; due work</span></div>
+        <div id="today-list" aria-live="polite"></div>
+      </section>
+      <section id="saved-section" class="panel" role="tabpanel" aria-labelledby="tab-cases" tabindex="0" hidden>
+        <div class="section-heading dashboard-header"><h2 id="cases-heading">My Cases <span id="case-count" class="count-badge">0</span></h2><button type="button" id="refresh-cases" class="secondary">Refresh cases</button></div>
+        <p class="section-caption">Checked about every 5 minutes while Edge runs.</p>
+        <div class="refresh-tools">
+          <progress id="refresh-progress" value="0" max="1" aria-label="Case refresh progress" hidden></progress>
+          <button id="retry-cases" type="button" class="secondary" hidden>Retry failed cases</button>
+        </div>
+        <details class="disclosure">
+          <summary>Leave report</summary>
+          <form id="report-form">
+            <div class="report-dates">
+              <label>Leave starts<input id="report-start" type="date" required></label>
+              <label>Leave ends<input id="report-end" type="date" required></label>
+            </div>
+            <p class="hint">Refresh cases first. Export uses saved data; it does not move deadlines or pause monitoring.</p>
+            <button id="export-report" type="submit" class="secondary">Download HTML report</button>
+            <p id="report-status" class="hint" role="status" aria-live="polite"></p>
+          </form>
+        </details>
+        <div id="case-list"></div>
+      </section>
+      <section id="calendar-section" class="panel" role="tabpanel" aria-labelledby="tab-calendar" tabindex="0" hidden>
+        <div class="section-heading"><h2>Calendar</h2><span class="section-note">Week view</span></div>
+        <div class="calendar-toolbar">
+          <div class="calendar-navigation">
+            <button id="calendar-previous" type="button" aria-label="Previous week">&lsaquo;</button>
+            <button id="calendar-current" type="button">Today</button>
+            <button id="calendar-next" type="button" aria-label="Next week">&rsaquo;</button>
+          </div>
+          <strong id="calendar-range"></strong>
+        </div>
+        <div class="calendar-legend" aria-label="Calendar event types">
+          <span class="due">Due</span><span class="reply">Reply</span><span class="observed">Posted</span><span class="prediction">Forecast</span><span class="overdue">Overdue</span>
+        </div>
+        <div id="calendar-days" class="calendar-grid" aria-label="Weekly case calendar"></div>
+        <section id="calendar-agenda" aria-label="Selected day details">
+          <h3 id="calendar-agenda-heading"></h3>
+          <div id="calendar-agenda-list"></div>
+        </section>
+        <p class="hint">Forecasts assume no customer reply; they do not confirm CI closure.</p>
+      </section>
+    </section>
+    <div id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" hidden>
+    <details id="profile-section" class="panel settings-panel" open>
+      <summary>Settings <span class="section-note">Profile &amp; reminders</span></summary>
+      <p class="profile-status">Support profile: <span id="profile-label">Not set</span></p>
+      <form id="profile-form">
+        <label for="profile-input">Microsoft Learn profile link or user ID</label>
+        <div class="row"><input id="profile-input" type="text" autocomplete="off" placeholder="Profile link or user ID"><button type="submit">Save</button></div>
+        <p class="hint">Copy your profile link from one of your answers. Saved in this browser.</p>
+      </form>
+      <label class="reminder-option"><input id="desktop-reminders" type="checkbox"> Desktop reminders</label>
+      <p class="hint">At most once per case/action each day. Network failures and sleep can delay updates.</p>
+    </details>
+    <section class="panel" aria-labelledby="discord-heading">
+      <h2 id="discord-heading">Discord notifications</h2>
+      <form id="discord-form">
+        <label for="discord-webhook">Webhook URL</label>
+        <input id="discord-webhook" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your Discord webhook URL">
+        <label class="reminder-option"><input id="discord-enabled" type="checkbox"> Send new CX replies to Discord</label>
+        <label class="reminder-option"><input id="discord-excerpt" type="checkbox"> Include reply excerpt (up to 170 characters)</label>
+        <p class="hint">Default: case ID, action, deadline and reply link only. Data goes to Discord. Your webhook is stored locally, not encrypted; keep it private. Existing replies become the baseline after enabling. Clear the URL and save to remove it.</p>
+        <div class="row"><button id="discord-save" type="submit">Save Discord settings</button><button id="discord-test" class="secondary" type="button">Send test notification</button></div>
+      </form>
+      <p id="discord-status" class="hint" role="status" aria-live="polite"></p>
+    </section>
+    <details class="panel help-panel">
+      <summary>How to read the planner</summary>
+      <ul class="help-list">
+        <li><strong>Today:</strong> customer replies need attention now. Their next-business-day date is the final deadline.</li>
+        <li><strong>Complete:</strong> a forum post was observed; CI closure is not verified.</li>
+        <li><strong>Last known:</strong> refresh failed. Check the error shown on that case.</li>
+        <li><strong>Dates:</strong> local timezone, weekends excluded, holidays not included.</li>
+        <li><strong>Refresh:</strong> keep the popup open until it finishes. Background checks also run with the popup closed.</li>
+      </ul>
+      <p class="hint">Always verify the full thread and CI notes. This extension does not post replies, close cases, or access SharePoint/Insider/CI.</p>
+    </details>
+    </div>
+    <footer>Local planner · Verify CI closure separately</footer>
+  </main>
+  <script src="../../features/threads/extractor.js"></script>
+  <script src="../../core/engine.js"></script>
+  <script src="../../features/profile/profile.js"></script>
+  <script src="../../features/cases/dashboard.js"></script>
+  <script src="../../features/reports/report.js"></script>
+  <script src="tabs.js"></script>
+  <script src="thread-view.js"></script>
+  <script src="cases-view.js"></script>
+  <script src="calendar-view.js"></script>
+  <script src="settings-controller.js"></script>
+  <script src="report-controller.js"></script>
+  <script src="app-controller.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
