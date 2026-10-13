@@ -1,4 +1,4 @@
-function createSettingsController({ document, chrome, state, resolveSupportProfile, loadSettings, casesKey, renderCases, renderThread }) {
+function createSettingsController({ document, chrome, state, resolveSupportProfileDetails, syncProfileCases, loadSettings, casesKey, renderCases, renderThread }) {
   const reminderInput = document.getElementById('desktop-reminders');
   async function loadDiscord() {
     const profileId = state.supportAuthorId;
@@ -51,12 +51,14 @@ function createSettingsController({ document, chrome, state, resolveSupportProfi
     try {
       state.profileLoading = true;
       document.getElementById('message').textContent = 'Checking Microsoft Learn profile...';
-      const nextId = await resolveSupportProfile(document.getElementById('profile-input').value);
+      const profile = await resolveSupportProfileDetails(document.getElementById('profile-input').value);
+      const nextId = profile.id;
       ++state.threadRequest;
       document.getElementById('thread').hidden = true;
       document.getElementById('save-case').disabled = true;
       state.supportAuthorId = nextId;
-      await chrome.storage.local.set({ supportAuthorId: nextId });
+      await chrome.storage.local.set({ supportAuthorId: nextId,
+        ...(profile.username ? { [`profile-name-${nextId}`]: profile.username } : {}) });
       await loadReminders();
       await loadDiscord();
       document.getElementById('profile-label').textContent = nextId;
@@ -67,6 +69,7 @@ function createSettingsController({ document, chrome, state, resolveSupportProfi
       renderCases();
       if (state.thread) renderThread();
       document.getElementById('message').textContent = 'Support profile saved on this device.';
+      await syncProfileCases();
     } catch (error) {
       state.profileLoading = false;
       document.getElementById('message').textContent = error.message;

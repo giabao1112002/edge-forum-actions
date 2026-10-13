@@ -41,3 +41,14 @@ test('corrections invalidate an older refresh and stay scoped to their profile',
   assert.deepEqual(saved['thread-a-1'], settings);
   assert.equal(saved['thread-b-1'], undefined);
 });
+
+test('removed cases stay excluded from activity until manually saved again', async () => {
+  const { saved, change } = store();
+  const caseSummary = { id: '1', action: 'Review needed' };
+  await change({ type: 'add', profileId: 'a', id: '1', summary: caseSummary });
+  await change({ type: 'remove', profileId: 'a', id: '1' });
+  assert.deepEqual(saved['ignored-cases-a'], ['1']);
+  assert.equal((await change({ type: 'add', source: 'activity', profileId: 'a', id: '1', summary: caseSummary })).applied, false);
+  assert.equal((await change({ type: 'add', profileId: 'a', id: '1', summary: caseSummary })).applied, true);
+  assert.deepEqual(saved['ignored-cases-a'], []);
+});

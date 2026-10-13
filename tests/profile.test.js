@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseSupportProfile, resolveSupportProfile } = require('../src/features/profile/profile');
+const { parseSupportProfile, resolveSupportProfile, resolveSupportProfileDetails } = require('../src/features/profile/profile');
+const { activityThreadLinks } = require('../src/features/profile/activity');
 
 const profileId = '696f09c3-51ea-4371-99ea-14d4c83bead8';
 test('teammates can set their own profile by ID or Microsoft Learn link', () => {
@@ -29,6 +30,8 @@ test('profile links without userid resolve through Microsoft Learn while existin
   assert.equal(await resolveSupportProfile(profileId, request), profileId);
   assert.equal(await resolveSupportProfile(`${link}?userid=${profileId}`, request), profileId);
   assert.equal(calls, 1);
+  assert.deepEqual(await resolveSupportProfileDetails(`${link}?userid=${profileId}`, request),
+    { id: profileId, username: 'brianphamwicloudcorporation-2796' });
 });
 
 test('failed or invalid profile lookups are rejected', async () => {
@@ -43,4 +46,18 @@ test('failed or invalid profile lookups are rejected', async () => {
   await assert.rejects(resolveSupportProfile(`${link}?userid=invalid`, async () => {
     throw new Error('should not request');
   }), /invalid user ID/);
+});
+
+test('activity links require the right profile and recent authored Q&A posts', () => {
+  const now = new Date('2026-10-13T12:00:00Z');
+  const item = (id, type, actionVerb, extra = {}) => ({ activityType: 'qnA', userId: profileId,
+    timestamp: '2026-10-13T10:00:00Z', activityData: { type, actionVerb,
+      uri: `/en-us/answers/questions/${id}/test` }, ...extra });
+  const feed = { userId: profileId, items: [item('1', 'answer', 'answered'), item('1', 'comment', 'commented'),
+    item('2', 'comment', 'commented'), item('3', 'comment', 'edited'),
+    item('4', 'answer', 'answered', { timestamp: '2026-08-01T10:00:00Z' }),
+    item('5', 'answer', 'answered', { activityData: { type: 'answer', actionVerb: 'answered',
+      uri: 'https://example.com/en-us/answers/questions/5/test' } })] };
+  assert.deepEqual(activityThreadLinks(feed, profileId, now).map((item) => item.id), ['1', '2']);
+  assert.throws(() => activityThreadLinks({ ...feed, userId: 'other' }, profileId, now), /does not match/);
 });

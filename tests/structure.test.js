@@ -76,5 +76,5 @@ test('every extension and test JavaScript file passes node --check', () => {
     const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
     assert.equal(checked.status, 0, `${relative(root, file)}: ${checked.stderr}`);
   }
-  assert.equal(files.length, 29);
+  assert.equal(files.length, 30);
 });

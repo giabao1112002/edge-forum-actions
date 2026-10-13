@@ -23,6 +23,8 @@ function background(initial) {
   const alarms = [];
   let clock = '2026-09-30T12:00:00Z';
   let currentThread = thread;
+  let activityFeed = { userId: profileId, totalPages: 1, items: [] };
+  let threadMap;
   let readError;
   let parserCreated = false;
   const chrome = {
@@ -49,8 +51,8 @@ function background(initial) {
       onMessage: { addListener: (listener) => { listeners.message = listener; } },
       getURL: (path) => `chrome-extension://test/${path}`,
       getContexts: async () => parserCreated ? [{}] : [],
-      sendMessage: async ({ type }) => type === 'icon' ? { iconUrl: 'data:image/png;base64,test' }
-        : readError ? { error: readError } : { thread: currentThread },
+      sendMessage: async ({ type, url }) => type === 'icon' ? { iconUrl: 'data:image/png;base64,test' }
+        : readError ? { error: readError } : { thread: threadMap?.get(url) || currentThread },
       onStartup: { addListener: (listener) => { listeners.startup = listener; } },
       onInstalled: { addListener: (listener) => { listeners.installed = listener; } }
     },
@@ -65,13 +67,41 @@ function background(initial) {
     constructor(...args) { super(...(args.length ? args : [clock])); }
     static now() { return Date.parse(clock); }
   }
-  const context = vm.createContext({ chrome, Date: FixedDate, URL, console,
+  const context = vm.createContext({ chrome, Date: FixedDate, URL, console, AbortSignal,
+    fetch: async (url) => ({ ok: true, json: async () => typeof activityFeed === 'function' ? activityFeed(url) : activityFeed }),
     importScripts: (...files) => files.forEach((file) => vm.runInContext(readFileSync(resolve(dirname(sourcePath('background.js')), file), 'utf8'), context)) });
   vm.runInContext(source('background.js'), context);
   return { context, saved, listeners, notifications, badges, colors, alarms,
     setThread: (next) => { currentThread = next; }, setError: (error) => { readError = error; },
+    setFeed: (feed) => { activityFeed = feed; }, setThreads: (entries) => { threadMap = new Map(entries); },
     setNow: (value) => { clock = value; } };
 }
+
+test('profile activity discovers authored answers and comments, but never restores removed cases', async () => {
+  const profileName = 'teammate-1234';
+  const answerUrl = 'https://learn.microsoft.com/en-us/answers/questions/1234/test';
+  const commentUrl = 'https://learn.microsoft.com/en-us/answers/questions/5678/test';
+  const app = background({ supportAuthorId: profileId, [`profile-name-${profileId}`]: profileName });
+  const item = (id, type, actionVerb) => ({ activityType: 'qnA', userId: profileId,
+    timestamp: '2026-09-30T10:00:00Z', activityData: { type, actionVerb,
+      uri: `/en-us/answers/questions/${id}/test` } });
+  app.setFeed((url) => ({ userId: profileId, totalPages: 2, items: url.includes('page=2')
+    ? [item('5678', 'comment', 'commented')]
+    : [item('1234', 'answer', 'answered'), item('1234', 'comment', 'commented')] }));
+  app.setThreads([[answerUrl, thread], [commentUrl, { id: '5678', url: commentUrl, title: 'Comment only', entries: [
+    { id: 'question-5678', type: 'question', authorId: 'customer', timestamp: '2026-09-29T10:00:00Z' },
+    { id: 'comment-7', type: 'comment', authorId: profileId, timestamp: '2026-09-30T10:00:00Z' }
+  ] }]]);
+  const first = await app.context.discoverSavedCases(profileId);
+  assert.equal(first.added, 2);
+  assert.equal(app.saved[`cases-${profileId}`].map((entry) => entry.id).join(','), '1234,5678');
+  assert.equal(app.saved[`cases-${profileId}`][1].action, 'Review needed');
+  await vm.runInContext('changeCase', app.context)({ type: 'remove', profileId, id: '5678' });
+  assert.equal(app.saved[`ignored-cases-${profileId}`].join(','), '5678');
+  const second = await app.context.discoverSavedCases(profileId);
+  assert.equal(second.added, 0);
+  assert.equal(app.saved[`cases-${profileId}`].map((entry) => entry.id).join(','), '1234');
+});
 
 test('five-minute checks refresh saved cases, update badges, notify once per action per day, and open the list', async () => {
   const app = background({ supportAuthorId: profileId, [`cases-${profileId}`]: [dueCase], [`reminders-${profileId}`]: true });

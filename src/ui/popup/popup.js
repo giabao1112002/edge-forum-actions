@@ -5,5 +5,5 @@ const domain = { planAction, scopeThread, inferProcessStage, inferPostAction, ca
   caseTitle, caseStatus, caseCategory, caseStep, postedToday, todayActivity, sortCases, localDateKey, calendarWeek };
 const app = createPopupApp({ document, chrome, state, domain, extractForumThread,
   views: { createTabs, createThreadView, createCasesView, createCalendarView,
-    createSettingsController, createReportController }, resolveSupportProfile, buildLeaveReport });
+    createSettingsController, createReportController }, resolveSupportProfileDetails, buildLeaveReport });
 app.initialize().catch((error) => { document.getElementById('message').textContent = error.message; });

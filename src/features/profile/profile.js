@@ -21,9 +21,9 @@ function parseSupportProfile(value) {
   return profile.id;
 }
 
-async function resolveSupportProfile(value, request) {
+async function resolveSupportProfileDetails(value, request) {
   const profile = supportProfileInput(value);
-  if (profile.id) return profile.id;
+  if (profile.id) return profile;
   const endpoint = `https://learn.microsoft.com/api/profiles/${encodeURIComponent(profile.username)}`;
   let response;
   try {
@@ -38,7 +38,11 @@ async function resolveSupportProfile(value, request) {
   catch { throw new Error('Microsoft Learn returned an unreadable profile.'); }
   if (typeof data?.userId !== 'string' || !supportProfileIdPattern.test(data.userId))
     throw new Error('Microsoft Learn did not return a valid user ID for this profile.');
-  return data.userId.toLowerCase();
+  return { id: data.userId.toLowerCase(), username: profile.username };
 }
 
-if (typeof module !== 'undefined') module.exports = { parseSupportProfile, resolveSupportProfile };
+async function resolveSupportProfile(value, request) {
+  return (await resolveSupportProfileDetails(value, request)).id;
+}
+
+if (typeof module !== 'undefined') module.exports = { parseSupportProfile, resolveSupportProfile, resolveSupportProfileDetails };

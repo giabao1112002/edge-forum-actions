@@ -1,5 +1,5 @@
 // Owns async request/profile guards and orchestrates storage, reader and views.
-function createPopupApp({ document, chrome, state, domain, extractForumThread, views, resolveSupportProfile, buildLeaveReport }) {
+function createPopupApp({ document, chrome, state, domain, extractForumThread, views, resolveSupportProfileDetails, buildLeaveReport }) {
   const { caseSummary, planAction, caseTitle } = domain;
   const message = document.getElementById('message');
   const threadSection = document.getElementById('thread');
@@ -12,13 +12,15 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
   const casesView = views.createCasesView({ document, state, domain, persistCases, renderThread, renderCalendar });
   const renderCases = () => casesView.renderCases();
   const { loadDiscord, loadReminders } = views.createSettingsController({ document, chrome, state,
-    resolveSupportProfile, loadSettings, casesKey, renderCases, renderThread });
+    resolveSupportProfileDetails, syncProfileCases, loadSettings, casesKey, renderCases, renderThread });
   views.createReportController({ document, state, buildLeaveReport });
 
   chrome.storage.onChanged?.addListener((changes, area) => {
     if (area !== 'local' || state.profileLoading || !state.supportAuthorId) return;
     if (changes[`discord-status-${state.supportAuthorId}`])
       document.getElementById('discord-status').textContent = changes[`discord-status-${state.supportAuthorId}`].newValue?.message || '';
+    if (changes[`activity-sync-${state.supportAuthorId}`])
+      document.getElementById('activity-sync-status').textContent = changes[`activity-sync-${state.supportAuthorId}`].newValue?.message || '';
     if (changes[casesKey()]) {
       const previous = state.cases.find((item) => item.id === state.thread?.id);
       state.cases = changes[casesKey()].newValue || [];
@@ -30,6 +32,26 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
       } else if (state.thread && !state.profileLoading) renderThread();
     }
   });
+  async function syncProfileCases() {
+    const profileId = state.supportAuthorId;
+    const key = `profile-name-${profileId}`;
+    const stored = await chrome.storage.local.get([key, `activity-sync-${profileId}`]);
+    if (profileId !== state.supportAuthorId) return;
+    const status = document.getElementById('activity-sync-status');
+    status.textContent = stored[`activity-sync-${profileId}`]?.message ||
+      (stored[key] ? 'Checking recent profile activity...' : 'Save a profile link to discover cases automatically.');
+    if (!stored[key]) return;
+    try {
+      const result = await chrome.runtime.sendMessage({ target: 'forum-discovery', profileId });
+      if (result?.error) throw new Error(result.error);
+      if (profileId !== state.supportAuthorId) return;
+      status.textContent = result?.message || 'Profile activity checked.';
+      state.cases = (await chrome.storage.local.get(casesKey()))[casesKey()] || [];
+      renderCases();
+    } catch (error) {
+      if (profileId === state.supportAuthorId) status.textContent = `Profile activity check failed: ${error.message}`;
+    }
+  }
   function validateUrl(value) {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.hostname !== 'learn.microsoft.com' ||
@@ -189,6 +211,7 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
       try { validateUrl(tab.url); await loadThread(tab.url, tab.id); }
       catch { message.textContent = 'Open a Microsoft Q&A thread or paste its link above.'; }
     }
+    syncProfileCases().catch((error) => { document.getElementById('activity-sync-status').textContent = error.message; });
     await refreshSavedCases();
   }
   return app;

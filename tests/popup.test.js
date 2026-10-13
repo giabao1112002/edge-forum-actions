@@ -653,6 +653,7 @@ test('popup saves a profile link without userid after lookup and preserves the o
   get('profile-input').value = 'https://learn.microsoft.com/en-us/users/teammate-1234/';
   await get('profile-form').handlers.submit({ preventDefault() {} });
   assert.equal(app.saved.supportAuthorId, resolvedId);
+  assert.equal(app.saved[`profile-name-${resolvedId}`], 'teammate-1234');
   assert.equal(get('profile-label').textContent, resolvedId);
   app.context.fetch = async () => { throw new Error('offline'); };
   get('profile-input').value = 'https://learn.microsoft.com/en-us/users/another-teammate/';
