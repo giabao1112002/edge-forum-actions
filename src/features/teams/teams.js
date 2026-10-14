@@ -59,7 +59,7 @@ function createTeamsNotifier(storage, request, scope) {
       if (!config?.webhook) throw new Error('Save a Teams Workflow webhook first.');
       try {
         await send(config.webhook, teamsCard('Test notification', ['Forum Action Planner is connected. No case data is included.']));
-        await storage.set({ [`teams-status-${profileId}`]: { message: 'Test notification sent.', sentAt: new Date().toISOString() } });
+        await storage.set({ [`teams-status-${profileId}`]: { message: 'Workflow accepted the test request. Check the chat and run history.', sentAt: new Date().toISOString() } });
         return { ok: true };
       } catch (error) {
         await storage.set({ [`teams-status-${profileId}`]: { message: error.message, retryAt: error.retryAt || null } });
@@ -105,7 +105,7 @@ function createTeamsNotifier(storage, request, scope) {
         try {
           await send(config.webhook, card);
           history[thread.id] = [...new Set([...history[thread.id], ...batch.map((item) => item.id)])];
-          await storage.set({ [seenKey]: history, [statusKey]: { message: 'Customer reply notification sent.', sentAt: new Date().toISOString() } });
+          await storage.set({ [seenKey]: history, [statusKey]: { message: 'Workflow accepted the reply notification. Check the chat and run history.', sentAt: new Date().toISOString() } });
         } catch (error) {
           await storage.set({ [statusKey]: { message: error.message, retryAt: error.retryAt || null } });
           return;

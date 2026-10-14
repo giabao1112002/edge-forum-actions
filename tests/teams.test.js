@@ -58,6 +58,7 @@ test('Teams test is explicit, reply detection baselines old replies, then sends 
   await a.notifier.test(profileId);
   assert.equal(a.requests.length, 2);
   assert.match(JSON.stringify(a.requests[1].payload), /No case data is included/);
+  assert.match(a.saved['teams-status-support'].message, /accepted the test request/);
 });
 
 test('Teams failure retains unsent replies for retry, while disabled configuration stores no webhook', async () => {
