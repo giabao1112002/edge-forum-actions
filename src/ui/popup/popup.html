@@ -116,8 +116,8 @@
       <form id="teams-form">
         <label for="teams-webhook">Teams Workflow webhook URL</label>
         <input id="teams-webhook" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the webhook link from Teams Workflows">
-        <label class="reminder-option"><input id="teams-enabled" type="checkbox"> Send new CX replies to Teams</label>
-        <p class="hint">Use a “Send webhook alerts to a chat” workflow. Sends case ID, action, deadline and thread link; never reply text. The webhook is stored locally without encryption. Clear the URL and save to remove it.</p>
+        <label class="reminder-option"><input id="teams-enabled" type="checkbox"> Send new CX replies and accepted answers to Teams</label>
+        <p class="hint">Use a “Send webhook alerts to a chat” workflow. Reply cards contain case ID, action, deadline and thread link; accepted-answer cards contain case ID and answer link. No customer reply text is sent. The webhook is stored locally without encryption. Clear the URL and save to remove it.</p>
         <div class="row"><button id="teams-save" type="submit">Save Teams settings</button><button id="teams-test" class="secondary" type="button">Send test notification</button></div>
       </form>
       <p id="teams-status" class="hint" role="status" aria-live="polite"></p>

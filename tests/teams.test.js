@@ -76,3 +76,54 @@ test('Teams failure retains unsent replies for retry, while disabled configurati
   await a.notifier.configure(profileId, { enabled: false, webhook: '' });
   assert.equal(a.saved['teams-support'].webhook, '');
 });
+
+test('Teams alerts once when the question author accepts this profile’s answer', async () => {
+  const a = app();
+  await a.notifier.configure(profileId, { enabled: true, webhook });
+  await a.notifier.observe(profileId, base);
+  const otherAnswer = { id: 'answer-other', type: 'answer', authorId: 'other', timestamp: '2026-10-02T09:00:00Z' };
+  const withOther = { ...base, entries: [...base.entries, otherAnswer], acceptedAnswerId: otherAnswer.id };
+  await a.notifier.observe(profileId, withOther);
+  assert.equal(a.requests.length, 0);
+  const accepted = { ...withOther, acceptedAnswerId: 'answer-1', hasMorePages: true };
+  await a.notifier.observe(profileId, accepted);
+  assert.equal(a.requests.length, 1);
+  const card = a.requests[0].payload.attachments[0].content;
+  assert.match(card.body[0].text, /Your answer was accepted.*Case 1/);
+  assert.match(card.body[1].text, /Verify CI closure separately/);
+  assert.match(card.actions[0].url, /#answer-1$/);
+  assert.deepEqual(a.saved['teams-accepted-support']['1'], ['answer-1']);
+  await a.notifier.observe(profileId, accepted);
+  assert.equal(a.requests.length, 1);
+});
+
+test('Teams baselines an already accepted answer and retries an acceptance after send failure', async () => {
+  const a = app();
+  await a.notifier.configure(profileId, { enabled: true, webhook });
+  await a.notifier.observe(profileId, { ...base, acceptedAnswerId: 'answer-1' });
+  assert.equal(a.requests.length, 0);
+  assert.deepEqual(a.saved['teams-accepted-support']['1'], ['answer-1']);
+  await a.notifier.observe(profileId, { ...base, acceptedAnswerId: 'answer-1' });
+  assert.equal(a.requests.length, 0);
+
+  const b = app();
+  await b.notifier.configure(profileId, { enabled: true, webhook });
+  await b.notifier.observe(profileId, base);
+  b.setResponse(async () => { throw new Error(`Failed at ${webhook}`); });
+  await b.notifier.observe(profileId, { ...base, acceptedAnswerId: 'answer-1' });
+  assert.deepEqual(b.saved['teams-accepted-support']['1'], []);
+  assert.doesNotMatch(b.saved['teams-status-support'].message, /private_token/);
+  b.setResponse(async () => ({ ok: true, status: 202 }));
+  await b.notifier.observe(profileId, { ...base, acceptedAnswerId: 'answer-1' });
+  assert.deepEqual(b.saved['teams-accepted-support']['1'], ['answer-1']);
+});
+
+test('Teams sends both a new reply and a new acceptance observed in the same check', async () => {
+  const a = app();
+  await a.notifier.configure(profileId, { enabled: true, webhook });
+  await a.notifier.observe(profileId, base);
+  await a.notifier.observe(profileId, { ...base, acceptedAnswerId: 'answer-1', entries: [...base.entries, reply('new')] });
+  assert.equal(a.requests.length, 2);
+  assert.match(a.requests[0].payload.attachments[0].content.body[0].text, /accepted/);
+  assert.match(a.requests[1].payload.attachments[0].content.body[0].text, /Customer replied/);
+});

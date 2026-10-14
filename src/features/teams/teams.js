@@ -18,6 +18,16 @@ function teamsCard(title, lines, link = '') {
   return { type: 'message', attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: card }] };
 }
 
+function teamsThreadLink(thread, entryId) {
+  try {
+    const url = new URL(thread.url);
+    if (url.protocol === 'https:' && url.hostname === 'learn.microsoft.com' &&
+        /^\/[a-z]{2}-[a-z]{2}\/answers\/questions\/\d+(?:\/|$)/i.test(url.pathname))
+      return `${url.origin}${url.pathname}#${encodeURIComponent(entryId)}`;
+  } catch {}
+  return '';
+}
+
 function createTeamsNotifier(storage, request, scope) {
   let pending = Promise.resolve();
   const enqueue = (task) => {
@@ -50,8 +60,8 @@ function createTeamsNotifier(storage, request, scope) {
       const config = { enabled: !!settings.enabled, webhook };
       const reset = !old || old.webhook !== webhook || old.enabled !== config.enabled;
       await storage.set({ [key]: config, [`teams-status-${profileId}`]: { message: config.enabled
-        ? 'Enabled. The first complete check of each case establishes a baseline; old replies will not be sent.' : 'Teams is off.' },
-      ...(reset ? { [`teams-seen-${profileId}`]: {} } : {}) });
+        ? 'Enabled. The first check establishes a baseline; old replies and accepted answers will not be sent.' : 'Teams is off.' },
+      ...(reset ? { [`teams-seen-${profileId}`]: {}, [`teams-accepted-${profileId}`]: {} } : {}) });
       return { ok: true };
     }),
     test: (profileId) => enqueue(async () => {
@@ -69,11 +79,38 @@ function createTeamsNotifier(storage, request, scope) {
     observe: (profileId, thread) => enqueue(async () => {
       const configKey = `teams-${profileId}`;
       const seenKey = `teams-seen-${profileId}`;
+      const acceptedKey = `teams-accepted-${profileId}`;
       const statusKey = `teams-status-${profileId}`;
-      const stored = await storage.get(['supportAuthorId', configKey, seenKey, statusKey, `cases-${profileId}`]);
+      const stored = await storage.get(['supportAuthorId', configKey, seenKey, acceptedKey, statusKey, `cases-${profileId}`]);
       const config = stored[configKey];
-      if (!config?.enabled || stored.supportAuthorId !== profileId || thread.hasMorePages ||
+      if (!config?.enabled || stored.supportAuthorId !== profileId ||
           !(stored[`cases-${profileId}`] || []).some((item) => item.id === thread.id)) return;
+      const acceptedAnswer = thread.entries.find((entry) => entry.type === 'answer' &&
+        entry.id === thread.acceptedAnswerId && entry.authorId === profileId);
+      const acceptedHistory = stored[acceptedKey] || {};
+      if (!Object.hasOwn(acceptedHistory, thread.id)) {
+        acceptedHistory[thread.id] = acceptedAnswer ? [acceptedAnswer.id] : [];
+        await storage.set({ [acceptedKey]: acceptedHistory });
+      } else if (acceptedAnswer && !acceptedHistory[thread.id].includes(acceptedAnswer.id)) {
+        if (stored[statusKey]?.retryAt > Date.now()) return;
+        const current = await storage.get(['supportAuthorId', configKey, `cases-${profileId}`]);
+        const savedCase = (current[`cases-${profileId}`] || []).find((item) => item.id === thread.id);
+        if (current.supportAuthorId !== profileId || !current[configKey]?.enabled ||
+            current[configKey].webhook !== config.webhook || !savedCase || savedCase.error) return;
+        try {
+          await send(config.webhook, teamsCard(`Your answer was accepted · Case ${thread.id}`,
+            ['The question author accepted your answer. Verify CI closure separately.'],
+            teamsThreadLink(thread, acceptedAnswer.id)));
+          acceptedHistory[thread.id] = [...acceptedHistory[thread.id], acceptedAnswer.id];
+          await storage.set({ [acceptedKey]: acceptedHistory, [statusKey]: {
+            message: 'Workflow accepted the answer-acceptance notification. Check the chat and run history.',
+            sentAt: new Date().toISOString() } });
+        } catch (error) {
+          await storage.set({ [statusKey]: { message: error.message, retryAt: error.retryAt || null } });
+          return;
+        }
+      }
+      if (thread.hasMorePages) return;
       const scoped = scope(thread, profileId);
       const customer = scoped.entries.find((item) => item.type === 'question')?.authorId;
       const firstAnswer = scoped.entries.find((item) => item.type === 'answer' && item.authorId === profileId);
@@ -95,10 +132,7 @@ function createTeamsNotifier(storage, request, scope) {
         if (current.supportAuthorId !== profileId || !current[configKey]?.enabled || current[configKey].webhook !== config.webhook ||
             !savedCase || savedCase.error) return;
         const batch = fresh.slice(index, index + 10);
-        const candidate = new URL(thread.url);
-        const link = candidate.protocol === 'https:' && candidate.hostname === 'learn.microsoft.com' &&
-          /^\/[a-z]{2}-[a-z]{2}\/answers\/questions\/\d+(?:\/|$)/i.test(candidate.pathname)
-          ? `${candidate.origin}${candidate.pathname}#${encodeURIComponent(batch[0].id)}` : '';
+        const link = teamsThreadLink(thread, batch[0].id);
         const card = teamsCard(`Customer replied · Case ${thread.id}`,
           [`${batch.length} new customer reply${batch.length === 1 ? '' : 's'} detected. Open the thread to read.`,
             `Next action: ${String(savedCase.action).slice(0, 120)}`, `Deadline: ${savedCase.due || 'Not calculated'}`], link);
