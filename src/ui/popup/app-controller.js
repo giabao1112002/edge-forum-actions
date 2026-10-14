@@ -1,5 +1,6 @@
 // Owns async request/profile guards and orchestrates storage, reader and views.
-function createPopupApp({ document, chrome, state, domain, extractForumThread, views, resolveSupportProfileDetails, buildLeaveReport }) {
+function createPopupApp({ document, chrome, state, domain, extractForumThread, views, resolveSupportProfileDetails,
+  buildHandoverCase, buildLeaveReport }) {
   const { caseSummary, planAction, caseTitle } = domain;
   const message = document.getElementById('message');
   const threadSection = document.getElementById('thread');
@@ -13,7 +14,8 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
   const renderCases = () => casesView.renderCases();
   const { loadDiscord, loadReminders } = views.createSettingsController({ document, chrome, state,
     resolveSupportProfileDetails, syncProfileCases, loadSettings, casesKey, renderCases, renderThread });
-  views.createReportController({ document, state, buildLeaveReport });
+  views.createReportController({ document, chrome, state, buildLeaveReport, buildHandoverCase,
+    readThread: (url) => app.readThread(url), loadSettings, planAction, scopeThread: domain.scopeThread });
 
   chrome.storage.onChanged?.addListener((changes, area) => {
     if (area !== 'local' || state.profileLoading || !state.supportAuthorId) return;

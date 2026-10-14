@@ -11,10 +11,11 @@ function extractForumThread(page = document, pageUrl = location.href) {
     const author = node.querySelector('[data-test-id="content-author"][data-id]');
     const answerContainer = type === 'comment' ? node.closest?.('[id^="answer-"]') : null;
     const parentAnswerId = /^answer-\d+$/.test(answerContainer?.id || '') ? answerContainer.id : null;
+    const content = (node.querySelector('.content')?.textContent || '').replace(/\s+/g, ' ').trim();
     entries.push({ id: node.id, type, parentAnswerId, authorId: author?.getAttribute('data-id') || '',
       author: author?.querySelector('.profile-url')?.textContent?.trim() || 'Unknown',
       timestamp: new Date(date).toISOString(),
-      excerpt: (node.querySelector('.content')?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 170) });
+      content, excerpt: content.slice(0, 170) });
   }
   const question = page.getElementById(`question-${questionId}`);
   if (question) add(question, 'question');
@@ -22,7 +23,7 @@ function extractForumThread(page = document, pageUrl = location.href) {
     const timestamp = page.querySelector('meta[name="createdAt"]')?.content;
     if (timestamp && Number.isFinite(Date.parse(timestamp))) entries.push({ id: `question-${questionId}`, type: 'question',
       authorId: page.querySelector('meta[name="authorId"]')?.content || '', author: 'Question author',
-      timestamp: new Date(timestamp).toISOString(), excerpt: '' });
+      timestamp: new Date(timestamp).toISOString(), content: '', excerpt: '' });
   }
   page.querySelectorAll('[id^="answer-"], li[id^="comment-"]').forEach((node) => {
     if (/^answer-\d+$/.test(node.id) || /^comment-\d+$/.test(node.id))

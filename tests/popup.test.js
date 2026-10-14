@@ -557,7 +557,13 @@ test('leave report downloads only the current profile cases and validates dates'
   const app = await racePopup();
   const get = app.document.getElementById;
   assert.equal(get('export-report').disabled, true);
-  app.context.readThread = async () => app.thread('1234');
+  const handoverThread = { ...app.thread('1234'), entries: [
+    { id: 'question-1234', type: 'question', authorId: 'customer', timestamp: '2026-10-11T12:00:00Z',
+      content: 'The app cannot connect to the database.' },
+    { id: 'answer-1234', type: 'answer', authorId: app.profileId, author: 'Brian Pham',
+      timestamp: '2026-10-12T12:00:00Z', content: 'Please check the connection string.' }
+  ] };
+  app.context.readThread = async () => handoverThread;
   await app.context.loadThread(app.thread('1234').url);
   await get('save-case').handlers.click();
   app.saved['cases-other'] = [{ id: '9999', title: 'Other profile case' }];
@@ -577,17 +583,35 @@ test('leave report downloads only the current profile cases and validates dates'
     return element;
   };
   const before = structuredClone(app.saved);
-  get('report-form').handlers.submit({ preventDefault() {} });
+  await get('report-form').handlers.submit({ preventDefault() {} });
   assert.equal(downloaded.filename, 'leave-report-2026-10-15-to-2026-10-15.html');
   const html = decodeURIComponent(downloaded.href.split(',')[1]);
-  assert.match(html, /1234 - Thread 1234/);
+  assert.match(html, /Thread 1234 · Thread 1234/);
+  assert.match(html, /Brian Pham/);
+  assert.match(html, /app cannot connect to the database/);
   assert.doesNotMatch(html, /Other profile case/);
   assert.match(html, new RegExp(app.profileId));
   assert.equal(removed, true);
   assert.deepEqual(app.saved, before);
+  app.saved[`profile-name-${app.profileId}`] = 'owner-profile';
+  app.context.fetch = async () => ({ ok: true, json: async () => ({ userId: app.profileId, displayName: 'Verified Owner' }) });
+  app.context.AbortSignal = AbortSignal;
+  app.context.readThread = async () => ({ ...handoverThread, entries: handoverThread.entries.map((entry) =>
+    entry.authorId === app.profileId ? { ...entry, author: 'Unknown' } : entry) });
+  downloaded = undefined;
+  await get('report-form').handlers.submit({ preventDefault() {} });
+  assert.match(decodeURIComponent(downloaded.href.split(',')[1]), /Owner name<\/dt><dd>Verified Owner/);
+  app.context.readThread = async () => { throw new Error('Network unavailable'); };
+  downloaded = undefined;
+  await get('report-form').handlers.submit({ preventDefault() {} });
+  assert.match(decodeURIComponent(downloaded.href.split(',')[1]), /Could not refresh this thread: Network unavailable/);
+  app.context.readThread = async () => ({ ...handoverThread, acceptedAnswerId: 'answer-1234' });
+  downloaded = undefined;
+  await get('report-form').handlers.submit({ preventDefault() {} });
+  assert.doesNotMatch(decodeURIComponent(downloaded.href.split(',')[1]), /Thread 1234 · Thread 1234/);
   get('report-end').value = '2026-10-14';
   downloaded = undefined;
-  get('report-form').handlers.submit({ preventDefault() {} });
+  await get('report-form').handlers.submit({ preventDefault() {} });
   assert.equal(downloaded, undefined);
   assert.match(get('report-status').textContent, /valid leave date range/);
 });

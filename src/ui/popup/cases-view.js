@@ -13,7 +13,7 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
     retry.hidden = !failedCount;
     retry.disabled = refreshingCases || profileLoading || !supportAuthorId;
     retry.textContent = `Retry failed cases (${failedCount})`;
-    document.getElementById('export-report').disabled = refreshingCases || profileLoading || !supportAuthorId || !cases.length;
+    document.getElementById('export-report').disabled = state.exportingReport || refreshingCases || profileLoading || !supportAuthorId || !cases.length;
     renderToday();
     renderCalendar();
     if (!cases.length) {

@@ -27,8 +27,23 @@ test('extracts question metadata and answer/comment activity in chronological or
   assert.deepEqual(result.entries.map((entry) => entry.id), ['question-1234', 'answer-1', 'comment-2']);
   assert.equal(result.entries[2].authorId, 'customer');
   assert.equal(result.entries[1].excerpt, 'answer message');
+  assert.equal(result.entries[1].content, 'answer message');
   assert.equal(result.entries[2].parentAnswerId, null);
   assert.throws(() => extractForumThread(page, 'https://example.com/en-us/answers/questions/1234'), /Microsoft Learn/);
+});
+
+test('keeps full thread text in memory for handover while retaining short notification excerpts', () => {
+  const content = 'Customer question. '.repeat(25);
+  const question = { id: 'question-1234', querySelector: (selector) =>
+    selector.startsWith('local-time') ? { getAttribute: () => '2026-10-12T09:00:00Z' } :
+      selector.startsWith('[data-test-id') ? { getAttribute: () => 'customer', querySelector: () => ({ textContent: 'Customer' }) } :
+        selector === '.content' ? { textContent: content } : null };
+  const page = { getElementById: () => question,
+    querySelector: (selector) => selector === 'h1' ? { textContent: 'Question' } : null,
+    querySelectorAll: () => [] };
+  const result = extractForumThread(page, 'https://learn.microsoft.com/en-us/answers/questions/1234/test');
+  assert.equal(result.entries[0].content, content.trim());
+  assert.equal(result.entries[0].excerpt.length, 170);
 });
 
 test('identifies the parent answer of a customer comment', () => {
