@@ -26,6 +26,14 @@ Settings, seen reply IDs and last sending status are stored locally per support 
 
 Sending failures are shown in Settings separately from thread refresh errors. Unsent reply IDs are retried when they are observed on a later successful check; HTTP 429 imposes a retry window. Successful batches are recorded to suppress repeat sends across refreshes/restarts. Delivery is not exactly-once: a timeout after Discord accepted a message, or a restart before its success was saved, can produce a duplicate. Reads/sends are bounded by timeouts and Discord availability/rate limits. Edge must run; there is no automatic working-hours, weekend or leave pause yet. Turn Discord off when you do not want messages (this does not change business deadlines or stop case polling).
 
+## Teams notifications
+
+In Teams **Workflows**, create **Send webhook alerts to a chat**, choose the destination chat, and copy its webhook link. Reload the unpacked extension in Edge to grant the new Microsoft Workflow host access. In **Settings → Teams notifications**, paste the link, enable **Send new CX replies to Teams**, and save. Click **Send test notification** only when you want a real test card in that chat. The test card contains no case data. Check the selected chat and the workflow run history if the card does not appear.
+
+Teams uses a separate configuration and reply history from Discord, so either or both channels can be enabled. Only new replies on saved cases for the active support profile are sent; the first complete read after enabling establishes a baseline. A Teams card contains case ID, current action, deadline, and a thread link, without reply text or excerpts. The extension posts an Adaptive Card to the Microsoft Workflow webhook; it does not need GitHub or a custom backend. A successful webhook response means the workflow accepted the request; delivery to the chat can still fail inside the workflow.
+
+The Teams webhook link is a secret stored locally without encryption. Do not paste it into the repository, logs, or screenshots. Clear it and save to remove it from this browser. Network failures leave reply IDs unsent for a later successful check; a timeout after acceptance can cause a duplicate. Teams delivery requires Edge to be running and your organization's workflow permissions to allow the request. Turning Teams off does not change case deadlines, browser reminders, or Discord settings.
+
 ## Leave report
 
 In **My Cases**, expand **Leave report** and select the first and last day of your planned leave (inclusive); for one day, use the same date in both fields. Click **Download HTML report** and keep the popup open while it rereads the saved threads. Open the downloaded file in Edge. Use the browser's Print dialog if you want to save a PDF.
@@ -47,7 +55,7 @@ Export rereads every saved thread and recalculates its next action before select
 - Comment classification is a best-effort inference from authors, post order and dates, not proof a comment is a strike or final response. Use the optional correction for ordinary comments or exceptions. The planner cannot determine scope, issue resolution, CI notes, or PM timing from a public thread. "Strike" means a forum comment here, not a separate private-message action.
 - Dates use the computer's local timezone and skip weekends only; **holidays and internal policies are not included**. A multi-page thread blocks automated deadlines. Always verify the full thread and your CI/TA records before acting.
 - The result separates **observed** strike posts from **calculated** action dates and **predicted** closure dates. **Why this date?** links to the actual thread posts used by the rule, so you can check the evidence. Comments and answers in **View activity** also link to their source posts.
-- The extension stores your profile ID, corrections, and dashboard summaries on this device with `chrome.storage.local`; it does not store full case content in the dashboard. It fetches Microsoft Learn Q&A pages to read a thread or refresh saved cases, but does not contact SharePoint, Insider, CI, or other services. If a refresh fails, the last known summary remains visibly marked as such.
+- The extension stores your profile ID, corrections, and dashboard summaries on this device with `chrome.storage.local`; it does not store full case content in the dashboard. It fetches Microsoft Learn Q&A pages to read a thread or refresh saved cases. Optional Discord and Teams notifications contact only their configured webhook endpoints. It does not contact SharePoint, Insider, or CI. If a refresh fails, the last known summary remains visibly marked as such.
 
 ## Contributor architecture
 
@@ -63,7 +71,8 @@ src/
     profile/activity.js               Recent Q&A activity filtering and thread links
     cases/dashboard.js                Pure summaries, categories, Today and week calculations
     cases/case-store.js               Serialized, optimistic-concurrency storage mutations
-    discord/discord.js                Webhook validation, baselines, retries and delivery
+    discord/discord.js                Discord webhook validation, baselines and delivery
+    teams/teams.js                    Teams Workflow webhook validation, cards and delivery
     reports/report.js                 Pure HTML leave-report generation
   platform/
     background/background.js          MV3 worker, 5-minute alarm, badge/reminders and message routing
@@ -77,7 +86,7 @@ src/
     cases-view.js                     Grouped My Cases, removal confirmation and Today rendering
     calendar-view.js                  Week navigation, event chips and selected-day agenda
     tabs.js                           Accessible click/keyboard panel navigation
-    settings-controller.js            Profile transition, reminder and Discord settings
+    settings-controller.js            Profile transition, reminder and webhook settings
     report-controller.js              Leave dates and local HTML download
  tests/                               Node regression and structural/smoke checks
 ```
@@ -87,9 +96,9 @@ src/
 - `core` and the pure feature helpers do not know the popup, Chrome APIs, or each other's UI. The planner is kept unchanged by this refactor. Modify `engine.js` only for an explicitly agreed business-rule change, with engine tests.
 - Browser entrypoints still use **classic scripts**: the worker uses relative `importScripts`, and HTML lists dependencies in order. This deliberately preserves MV3 worker/offscreen and self-contained extractor injection compatibility without a build pipeline. Legacy pure helpers expose their existing CommonJS exports to Node tests. The composition root is the only popup file that collects these helpers and factory names from the script environment.
 - Popup modules are factory functions with an explicit `{ document, chrome, state, domain, callbacks }` interface (each takes only the fields it needs). They do not call another module's global renderer or read global mutable state. `popup.js` owns the shared state object; `app-controller.js` owns asynchronous read/refresh guards. Views keep only presentation state locally (expanded categories, selected calendar week/day). Factories register their own feature's event handlers and return methods needed by the controller.
-- Change result/evidence/correction rendering in `thread-view.js`; list/Today presentation in `cases-view.js`; calendar presentation/navigation in `calendar-view.js`; profile/Discord/reminder controls in `settings-controller.js`; download UX in `report-controller.js`; report content/escaping in `features/reports/report.js`; delivery/deduplication in `features/discord/discord.js`. Update the matching tests rather than changing business rules to accommodate UI changes.
-- Background and popup share the serialized case store through `forum-case-store` messages, not independent writes. Profile discovery runs in the worker through `forum-discovery` and uses the same case store. Discord delivery stays in the worker through `forum-discord`. Offscreen requests use `forum-parser`. DOM parsing stays out of the service worker. `app.readThread` is an explicit replaceable reader interface used by deterministic popup tests; full script loading is also tested without test adapters.
-- Storage remains local and profile-scoped. Existing keys are unchanged: `supportAuthorId`, `cases-`, `thread-` (including legacy corrections), `reminders-`, `notified-`, `discord-`, `discord-seen-`, and `discord-status-`. Discovery adds `profile-name-`, `activity-sync-`, and `ignored-cases-` keys. No migration or storage reset is required. Five-minute polling, notification behavior, tabbar and HTML report semantics are unchanged.
+- Change result/evidence/correction rendering in `thread-view.js`; list/Today presentation in `cases-view.js`; calendar presentation/navigation in `calendar-view.js`; profile/webhook/reminder controls in `settings-controller.js`; download UX in `report-controller.js`; report content/escaping in `features/reports/report.js`; delivery/deduplication in the corresponding `features/discord/discord.js` or `features/teams/teams.js` module. Update the matching tests rather than changing business rules to accommodate UI changes.
+- Background and popup share the serialized case store through `forum-case-store` messages, not independent writes. Profile discovery runs in the worker through `forum-discovery` and uses the same case store. Discord and Teams delivery stay in the worker through `forum-discord` and `forum-teams`. Offscreen requests use `forum-parser`. DOM parsing stays out of the service worker. `app.readThread` is an explicit replaceable reader interface used by deterministic popup tests; full script loading is also tested without test adapters.
+- Storage remains local and profile-scoped. Existing keys are unchanged: `supportAuthorId`, `cases-`, `thread-` (including legacy corrections), `reminders-`, `notified-`, `discord-`, `discord-seen-`, and `discord-status-`. Teams adds separate `teams-`, `teams-seen-`, and `teams-status-` keys. Discovery uses `profile-name-`, `activity-sync-`, and `ignored-cases-` keys. No migration or storage reset is required. Five-minute polling, notification behavior, tabbar and HTML report semantics are unchanged.
 - `customer-test-starter/` is a separate pre-existing Java demo, not part of the extension runtime or Node test command. Its files and `.github/` tooling are untouched.
 
 ### Verification
@@ -100,6 +109,6 @@ From the repository root, using Node.js (verified with Node 24):
 node --test tests/*.test.js
 ```
 
-This runs the original 80 regression cases plus structural/smoke checks. Tests use fake Chrome/DOM/network adapters; they **do not send real Discord messages**. The structural suite checks manifest/HTML/worker references, loads popup scripts in actual HTML order and offscreen scripts in their own context, rejects duplicate legacy entrypoints, and runs `node --check` on every extension/test JavaScript file.
+Tests use fake Chrome/DOM/network adapters; they **do not send real Discord or Teams messages**. The structural suite checks manifest/HTML/worker references, loads popup scripts in actual HTML order and offscreen scripts in their own context, rejects duplicate legacy entrypoints, and runs `node --check` on every extension/test JavaScript file.
 
-After reloading in Edge, manually open the popup and a Q&A thread, check the top tabs, saved-case refresh, profile switching and a local HTML report download. Automated Node checks cannot verify Edge permissions, real network availability, browser scheduling, desktop notification delivery or pixel layout. Do not click **Send test notification** unless you intend to send a real Discord connection test.
+After reloading in Edge, manually open the popup and a Q&A thread, check the top tabs, saved-case refresh, profile switching and a local HTML report download. Automated Node checks cannot verify Edge permissions, real network availability, browser scheduling, desktop notification delivery or pixel layout. Clicking either **Send test notification** sends a real message to that destination.

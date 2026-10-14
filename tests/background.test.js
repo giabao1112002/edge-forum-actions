@@ -21,6 +21,7 @@ function background(initial) {
   const badges = [];
   const colors = [];
   const alarms = [];
+  const webhookRequests = [];
   let clock = '2026-09-30T12:00:00Z';
   let currentThread = thread;
   let activityFeed = { userId: profileId, totalPages: 1, items: [] };
@@ -68,10 +69,16 @@ function background(initial) {
     static now() { return Date.parse(clock); }
   }
   const context = vm.createContext({ chrome, Date: FixedDate, URL, console, AbortSignal,
-    fetch: async (url) => ({ ok: true, json: async () => typeof activityFeed === 'function' ? activityFeed(url) : activityFeed }),
+    fetch: async (url, options) => {
+      if (options?.method === 'POST') {
+        webhookRequests.push({ url, options, payload: JSON.parse(options.body) });
+        return { ok: true, status: 202 };
+      }
+      return { ok: true, json: async () => typeof activityFeed === 'function' ? activityFeed(url) : activityFeed };
+    },
     importScripts: (...files) => files.forEach((file) => vm.runInContext(readFileSync(resolve(dirname(sourcePath('background.js')), file), 'utf8'), context)) });
   vm.runInContext(source('background.js'), context);
-  return { context, saved, listeners, notifications, badges, colors, alarms,
+  return { context, saved, listeners, notifications, badges, colors, alarms, webhookRequests,
     setThread: (next) => { currentThread = next; }, setError: (error) => { readError = error; },
     setFeed: (feed) => { activityFeed = feed; }, setThreads: (entries) => { threadMap = new Map(entries); },
     setNow: (value) => { clock = value; } };
@@ -238,6 +245,26 @@ test('Discord background checks baseline then send newly observed customer repli
   const tested = await receive({ target: 'forum-discord', type: 'test', profileId });
   assert.equal(tested.ok, true);
   assert.equal(sends.length, 2);
+});
+
+test('Teams background checks deliver new replies through the separate Workflow endpoint', async () => {
+  const app = background({ supportAuthorId: profileId, [`cases-${profileId}`]: [dueCase] });
+  const receive = (message) => new Promise((resolve) => app.listeners.message(message, { id: 'test' }, resolve));
+  const webhook = 'https://prod-01.westeurope.logic.azure.com/workflows/1234abcd/triggers/manual/paths/invoke?sig=private_token';
+  const configured = await receive({ target: 'forum-teams', type: 'configure', profileId,
+    settings: { enabled: true, webhook } });
+  assert.equal(configured.ok, true);
+  await app.context.refreshSavedCases();
+  assert.equal(app.webhookRequests.length, 0);
+  app.setThread({ ...thread, entries: [...thread.entries, { id: 'comment-new', type: 'comment',
+    authorId: 'customer', parentAnswerId: 'answer-1', timestamp: '2026-09-30T10:00:00Z', content: 'Private reply' }] });
+  await app.context.refreshSavedCases();
+  assert.equal(app.webhookRequests.length, 1);
+  assert.equal(app.webhookRequests[0].url, webhook);
+  assert.match(JSON.stringify(app.webhookRequests[0].payload), /#comment-new/);
+  assert.doesNotMatch(JSON.stringify(app.webhookRequests[0].payload), /Private reply/);
+  await app.context.refreshSavedCases();
+  assert.equal(app.webhookRequests.length, 1);
 });
 
 test('manual popup observations use the same Discord history and sending errors do not fail case storage', async () => {

@@ -1,9 +1,11 @@
 importScripts('../../core/engine.js', '../../features/cases/dashboard.js',
-  '../../features/cases/case-store.js', '../../features/profile/activity.js', '../../features/discord/discord.js');
+  '../../features/cases/case-store.js', '../../features/profile/activity.js',
+  '../../features/discord/discord.js', '../../features/teams/teams.js');
 
 const alarmName = 'check-saved-cases';
 const changeCase = createCaseStore(chrome.storage.local);
 const discord = createDiscordNotifier(chrome.storage.local, (...args) => fetch(...args), scopeThread);
+const teams = createTeamsNotifier(chrome.storage.local, (...args) => fetch(...args), scopeThread);
 let creatingParser;
 let refreshing;
 let discovering;
@@ -16,10 +18,11 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     discoverSavedCases(message.profileId).then(respond, (error) => respond({ error: error.message }));
     return true;
   }
-  if (message.target === 'forum-discord') {
+  if (message.target === 'forum-discord' || message.target === 'forum-teams') {
     if (typeof message.profileId !== 'string') return;
-    const task = message.type === 'configure' ? discord.configure(message.profileId, message.settings)
-      : message.type === 'test' ? discord.test(message.profileId) : null;
+    const notifier = message.target === 'forum-teams' ? teams : discord;
+    const task = message.type === 'configure' ? notifier.configure(message.profileId, message.settings)
+      : message.type === 'test' ? notifier.test(message.profileId) : null;
     if (!task) return;
     task.then(respond, (error) => respond({ error: error.message }));
     return true;
@@ -29,7 +32,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       typeof message.profileId !== 'string' || typeof message.id !== 'string') return;
   changeCase(message).then(async (result) => {
     if (message.thread && ['add', 'update'].includes(message.type))
-      await discord.observe(message.profileId, message.thread, message.summary).catch(() => {});
+      await Promise.allSettled([discord.observe(message.profileId, message.thread, message.summary),
+        teams.observe(message.profileId, message.thread)]);
     respond(result);
   }, () => respond({ error: 'Case storage could not be updated.' }));
   return true;
@@ -193,7 +197,8 @@ async function refreshSavedCases() {
         id: saved.id, expected: saved, summary });
       if (result.applied) checked.push(summary);
       if (observedThread && !summary.error && observedThread.id === saved.id)
-        await discord.observe(supportAuthorId, observedThread, summary).catch(() => {});
+        await Promise.allSettled([discord.observe(supportAuthorId, observedThread, summary),
+          teams.observe(supportAuthorId, observedThread)]);
     }
     if ((await chrome.storage.local.get('supportAuthorId')).supportAuthorId === supportAuthorId)
       await notifyDueCases(supportAuthorId, checked);

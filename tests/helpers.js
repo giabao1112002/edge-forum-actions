@@ -9,6 +9,7 @@ const sourcePaths = {
   'dashboard.js': 'src/features/cases/dashboard.js',
   'case-store.js': 'src/features/cases/case-store.js',
   'discord.js': 'src/features/discord/discord.js',
+  'teams.js': 'src/features/teams/teams.js',
   'report.js': 'src/features/reports/report.js',
   'background.js': 'src/platform/background/background.js',
   'offscreen.js': 'src/platform/offscreen/offscreen.js',

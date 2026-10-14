@@ -111,6 +111,17 @@
       </form>
       <p id="discord-status" class="hint" role="status" aria-live="polite"></p>
     </section>
+    <section class="panel" aria-labelledby="teams-heading">
+      <h2 id="teams-heading">Teams notifications</h2>
+      <form id="teams-form">
+        <label for="teams-webhook">Teams Workflow webhook URL</label>
+        <input id="teams-webhook" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the webhook link from Teams Workflows">
+        <label class="reminder-option"><input id="teams-enabled" type="checkbox"> Send new CX replies to Teams</label>
+        <p class="hint">Use a “Send webhook alerts to a chat” workflow. Sends case ID, action, deadline and thread link; never reply text. The webhook is stored locally without encryption. Clear the URL and save to remove it.</p>
+        <div class="row"><button id="teams-save" type="submit">Save Teams settings</button><button id="teams-test" class="secondary" type="button">Send test notification</button></div>
+      </form>
+      <p id="teams-status" class="hint" role="status" aria-live="polite"></p>
+    </section>
     <details class="panel help-panel">
       <summary>How to read the planner</summary>
       <ul class="help-list">

@@ -665,6 +665,36 @@ test('Discord settings are profile-scoped and test notifications require an expl
   assert.equal(messages.length, 2);
 });
 
+test('Teams settings are profile-scoped and test notifications require an explicit click', async () => {
+  const app = await racePopup();
+  const get = app.document.getElementById;
+  const messages = [];
+  const originalSend = app.chrome.runtime.sendMessage;
+  app.chrome.runtime.sendMessage = async (message) => {
+    if (message.target !== 'forum-teams') return originalSend(message);
+    messages.push(message);
+    if (message.type === 'configure') app.saved[`teams-${message.profileId}`] = message.settings;
+    return { ok: true };
+  };
+  get('teams-webhook').value = 'https://prod-01.westeurope.logic.azure.com/workflows/1234abcd/triggers/manual/paths/invoke?sig=private_token';
+  get('teams-enabled').checked = true;
+  await get('teams-form').handlers.submit({ preventDefault() {} });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, 'configure');
+  assert.equal(messages[0].profileId, app.profileId);
+  assert.equal(get('teams-test').disabled, false);
+  await get('teams-test').handlers.click();
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].type, 'test');
+  app.saved['teams-other'] = { enabled: false, webhook: '' };
+  get('profile-input').value = '12345678-1234-1234-1234-123456789abc';
+  await get('profile-form').handlers.submit({ preventDefault() {} });
+  assert.equal(get('teams-webhook').value, '');
+  assert.equal(get('teams-enabled').checked, false);
+  assert.equal(get('teams-test').disabled, true);
+  assert.equal(messages.length, 2);
+});
+
 test('popup saves a profile link without userid after lookup and preserves the old profile on failure', async () => {
   const app = await racePopup();
   const get = app.document.getElementById;

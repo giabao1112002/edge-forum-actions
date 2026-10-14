@@ -12,7 +12,7 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
   const { renderCalendar } = views.createCalendarView({ document, state, domain });
   const casesView = views.createCasesView({ document, state, domain, persistCases, renderThread, renderCalendar });
   const renderCases = () => casesView.renderCases();
-  const { loadDiscord, loadReminders } = views.createSettingsController({ document, chrome, state,
+  const { loadDiscord, loadTeams, loadReminders } = views.createSettingsController({ document, chrome, state,
     resolveSupportProfileDetails, syncProfileCases, loadSettings, casesKey, renderCases, renderThread });
   views.createReportController({ document, chrome, state, buildLeaveReport, buildHandoverCase,
     readThread: (url) => app.readThread(url), loadSettings, planAction, scopeThread: domain.scopeThread });
@@ -21,6 +21,8 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
     if (area !== 'local' || state.profileLoading || !state.supportAuthorId) return;
     if (changes[`discord-status-${state.supportAuthorId}`])
       document.getElementById('discord-status').textContent = changes[`discord-status-${state.supportAuthorId}`].newValue?.message || '';
+    if (changes[`teams-status-${state.supportAuthorId}`])
+      document.getElementById('teams-status').textContent = changes[`teams-status-${state.supportAuthorId}`].newValue?.message || '';
     if (changes[`activity-sync-${state.supportAuthorId}`])
       document.getElementById('activity-sync-status').textContent = changes[`activity-sync-${state.supportAuthorId}`].newValue?.message || '';
     if (changes[casesKey()]) {
@@ -207,6 +209,7 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
     if (state.supportAuthorId) state.cases = (await chrome.storage.local.get(casesKey()))[casesKey()] || [];
     await loadReminders();
     await loadDiscord();
+    await loadTeams();
     renderCases();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.url) {
