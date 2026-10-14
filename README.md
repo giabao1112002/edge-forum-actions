@@ -2,6 +2,8 @@
 
 An Edge Manifest V3 popup for reviewing Microsoft Learn Q&A threads. Paste a thread URL or open a Q&A question and click the extension. It reads the question, answers, comments, authors and timestamps, then calculates the next step from the supplied flowcharts. It does **not** post, strike, close threads, or access SharePoint/Insider/CI.
 
+For Developer Community, save its profile ID in the Developer Community profile field, then open or paste a `/t/.../NUMBER` thread and choose **Read** and **Save to My Cases**. Community and Learn cases appear together in My Cases, Today, and Calendar, while profiles, reminders, corrections, and storage remain separate by site. Automatic authored-thread discovery currently covers Learn only; Community threads are added manually.
+
 ## Install
 
 1. Open `edge://extensions` and turn on **Developer mode**.

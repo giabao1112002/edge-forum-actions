@@ -1,6 +1,6 @@
 importScripts('../../core/engine.js', '../../features/cases/dashboard.js',
-  '../../features/cases/case-store.js', '../../features/profile/activity.js',
-  '../../features/discord/discord.js', '../../features/teams/teams.js');
+  '../../features/cases/case-store.js', '../../features/profile/profile.js',
+  '../../features/profile/activity.js', '../../features/discord/discord.js', '../../features/teams/teams.js');
 
 const alarmName = 'check-saved-cases';
 const changeCase = createCaseStore(chrome.storage.local);
@@ -9,13 +9,28 @@ const teams = createTeamsNotifier(chrome.storage.local, (...args) => fetch(...ar
 let creatingParser;
 let refreshing;
 let discovering;
-let discoveringProfile;
+let discoveringSource;
+
+function configuredProfileId(stored, site) {
+  return stored.supportProfiles?.[site]?.id ||
+    (normalizeSupportSite(stored.supportSite || 'learn') === site ? stored.supportAuthorId : '');
+}
+
+async function profileIsConfigured(profileId, site) {
+  const stored = await chrome.storage.local.get(['supportAuthorId', 'supportSite', 'supportProfiles']);
+  return configuredProfileId(stored, site) === profileId;
+}
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id) return;
   if (message.target === 'forum-discovery') {
     if (typeof message.profileId !== 'string') return;
-    discoverSavedCases(message.profileId).then(respond, (error) => respond({ error: error.message }));
+    discoverSavedCases(message.profileId, message.site).then(respond, (error) => respond({ error: error.message }));
+    return true;
+  }
+  if (message.target === 'forum-thread-read') {
+    if (typeof message.url !== 'string') return;
+    parserMessage('read', message.url).then(respond, (error) => respond({ error: error.message }));
     return true;
   }
   if (message.target === 'forum-discord' || message.target === 'forum-teams') {
@@ -32,8 +47,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       typeof message.profileId !== 'string' || typeof message.id !== 'string') return;
   changeCase(message).then(async (result) => {
     if (message.thread && ['add', 'update'].includes(message.type))
-      await Promise.allSettled([discord.observe(message.profileId, message.thread, message.summary),
-        teams.observe(message.profileId, message.thread)]);
+      await Promise.allSettled([discord.observe(message.profileId, message.thread, message.summary, message.site),
+        teams.observe(message.profileId, message.thread, message.site)]);
     respond(result);
   }, () => respond({ error: 'Case storage could not be updated.' }));
   return true;
@@ -60,8 +75,11 @@ async function parserMessage(type, url) {
 }
 
 async function updateBadge() {
-  const { supportAuthorId } = await chrome.storage.local.get('supportAuthorId');
-  const cases = supportAuthorId ? (await chrome.storage.local.get(`cases-${supportAuthorId}`))[`cases-${supportAuthorId}`] || [] : [];
+  const stored = await chrome.storage.local.get(['supportAuthorId', 'supportSite', 'supportProfiles']);
+  const sites = ['learn', 'devcommunity'].filter((site) => configuredProfileId(stored, site));
+  const keys = sites.map((site) => profileStorageKey(configuredProfileId(stored, site), site, 'cases'));
+  const saved = keys.length ? await chrome.storage.local.get(keys) : {};
+  const cases = keys.flatMap((key) => saved[key] || []);
   const attention = cases.filter((item) => item.due && ['reply', 'urgent', 'today', 'overdue'].includes(todayActivity(item)));
   await chrome.action.setBadgeText({ text: attention.length ? String(attention.length) : '' });
   await chrome.action.setTitle({ title: attention.length ? `${attention.length} saved case(s) need action (last known status)` : 'Forum Action Planner' });
@@ -69,9 +87,12 @@ async function updateBadge() {
     ['urgent', 'overdue'].includes(todayActivity(item))) ? '#d76154' : '#b37400' });
 }
 
-async function notifyDueCases(profileId, cases) {
-  const { [`reminders-${profileId}`]: enabled, [`notified-${profileId}`]: history } =
-    await chrome.storage.local.get([`reminders-${profileId}`, `notified-${profileId}`]);
+async function notifyDueCases(profileId, cases, sourceSite = 'learn') {
+  const site = normalizeSupportSite(sourceSite);
+  const reminderKey = profileStorageKey(profileId, site, 'reminders');
+  const notifiedKey = profileStorageKey(profileId, site, 'notified');
+  const { [reminderKey]: enabled, [notifiedKey]: history } =
+    await chrome.storage.local.get([reminderKey, notifiedKey]);
   if (!enabled) return;
   const now = new Date();
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -81,30 +102,37 @@ async function notifyDueCases(profileId, cases) {
   let fresh = due.filter((item) => !alerted.includes(`${item.id}:${item.action}:${item.due}`));
   if (!fresh.length) return;
   const { iconUrl } = await parserMessage('icon');
-  const current = await chrome.storage.local.get(['supportAuthorId', `cases-${profileId}`, `reminders-${profileId}`]);
-  if (current.supportAuthorId !== profileId || !current[`reminders-${profileId}`]) return;
-  fresh = fresh.filter((item) => (current[`cases-${profileId}`] || []).some((saved) =>
+  const current = await chrome.storage.local.get(['supportAuthorId', 'supportSite', 'supportProfiles',
+    profileStorageKey(profileId, site, 'cases'), reminderKey]);
+  if (configuredProfileId(current, site) !== profileId || !current[reminderKey]) return;
+  fresh = fresh.filter((item) => (current[profileStorageKey(profileId, site, 'cases')] || []).some((saved) =>
     saved.id === item.id && !saved.error && saved.action === item.action && saved.due === item.due));
   if (!fresh.length) return;
-  await chrome.notifications.create(`forum-due-${profileId}`, {
+  const notificationId = site === 'learn' ? `forum-due-${profileId}` : `forum-due-${site}-${profileId}`;
+  await chrome.notifications.create(notificationId, {
     type: 'basic', iconUrl, title: `${fresh.length} case(s) need action`,
     message: fresh.slice(0, 2).map((item) => `${caseTitle(item)}: ${item.action}`).join('\n') +
       (fresh.length > 2 ? `\nAnd ${fresh.length - 2} more. Open My Cases to review.` : '')
   });
-  await chrome.storage.local.set({ [`notified-${profileId}`]: {
+  await chrome.storage.local.set({ [notifiedKey]: {
     day, keys: [...alerted, ...fresh.map((item) => `${item.id}:${item.action}:${item.due}`)]
   } });
 }
 
-async function discoverSavedCases(profileId) {
+async function discoverSavedCases(profileId, sourceSite) {
+  const initial = await chrome.storage.local.get('supportSite');
+  const site = normalizeSupportSite(sourceSite || initial.supportSite || 'learn');
+  const discoverySource = `${site}:${profileId}`;
   if (discovering) {
-    if (discoveringProfile === profileId) return discovering;
+    if (discoveringSource === discoverySource) return discovering;
     await discovering.catch(() => {});
   }
-  discoveringProfile = profileId;
+  discoveringSource = discoverySource;
   discovering = (async () => {
-    const profileKey = `profile-name-${profileId}`;
-    const statusKey = `activity-sync-${profileId}`;
+    const profileKey = profileStorageKey(profileId, site, 'profile-name');
+    const statusKey = profileStorageKey(profileId, site, 'activity-sync');
+    const casesKey = profileStorageKey(profileId, site, 'cases');
+    const ignoredKey = profileStorageKey(profileId, site, 'ignored-cases');
     const username = (await chrome.storage.local.get(profileKey))[profileKey];
     if (!username) return { message: 'Save a profile link to discover cases automatically.' };
     if (!/^[a-z0-9][a-z0-9._-]*$/i.test(username)) throw new Error('Saved profile name is invalid. Save the profile link again.');
@@ -129,79 +157,82 @@ async function discoverSavedCases(profileId) {
         if (page === 20 && page < totalPages) partial = true;
       }
       for (const link of links.values()) {
-        if ((await chrome.storage.local.get('supportAuthorId')).supportAuthorId !== profileId) break;
-        const key = `cases-${profileId}`;
-        const existing = await chrome.storage.local.get([key, `ignored-cases-${profileId}`]);
-        if ((existing[key] || []).some((item) => item.id === link.id) ||
-            (existing[`ignored-cases-${profileId}`] || []).includes(link.id)) continue;
+        if (!await profileIsConfigured(profileId, site)) break;
+        const existing = await chrome.storage.local.get([casesKey, ignoredKey]);
+        if ((existing[casesKey] || []).some((item) => item.id === link.id) ||
+            (existing[ignoredKey] || []).includes(link.id)) continue;
         try {
           const { thread } = await parserMessage('read', link.url);
           if (thread.id !== link.id || !thread.entries.some((entry) =>
             ['answer', 'comment'].includes(entry.type) && entry.authorId === profileId)) { skipped++; continue; }
-          const correctionKey = `thread-${profileId}-${thread.id}`;
-          const legacyKey = `thread-${thread.id}`;
+          const correctionKey = threadStorageKey(profileId, site, thread.id);
+          const legacyKey = threadStorageKey(profileId, 'learn', thread.id);
           const settings = await chrome.storage.local.get([correctionKey, legacyKey]);
           const correction = settings[correctionKey] ||
             (settings[legacyKey]?.supportAuthorId === profileId ? settings[legacyKey] : null);
           const actions = correction?.actions || {};
           const summary = caseSummary(thread, planAction(thread, { supportAuthorId: profileId, actions }),
             new Date().toISOString(), profileId, actions);
-          if ((await chrome.storage.local.get('supportAuthorId')).supportAuthorId !== profileId) break;
-          const result = await changeCase({ type: 'add', source: 'activity', profileId, id: link.id, summary });
+          if (!await profileIsConfigured(profileId, site)) break;
+          const result = await changeCase({ type: 'add', source: 'activity', profileId, id: link.id, summary, site });
           if (result.applied) added++;
         } catch { skipped++; }
       }
       const message = `Profile activity checked: ${added} new case(s) added${skipped ? `, ${skipped} skipped` : ''}${partial ? '; older activity may be missing' : ''}.`;
-      if ((await chrome.storage.local.get('supportAuthorId')).supportAuthorId === profileId)
+      if (await profileIsConfigured(profileId, site))
         await chrome.storage.local.set({ [statusKey]: { message, checkedAt: new Date().toISOString() } });
       return { added, skipped, message };
     } catch (error) {
-      if ((await chrome.storage.local.get('supportAuthorId')).supportAuthorId === profileId)
+      if (await profileIsConfigured(profileId, site))
         await chrome.storage.local.set({ [statusKey]: { message: `Profile activity check failed: ${error.message}`,
           checkedAt: new Date().toISOString() } });
       throw error;
     }
-  })().finally(() => { discovering = null; discoveringProfile = null; });
+  })().finally(() => { discovering = null; discoveringSource = null; });
   return discovering;
 }
 
 async function refreshSavedCases() {
   if (refreshing) return refreshing;
   refreshing = (async () => {
-    const { supportAuthorId } = await chrome.storage.local.get('supportAuthorId');
-    if (!supportAuthorId) return;
-    await discoverSavedCases(supportAuthorId).catch(console.error);
-    const key = `cases-${supportAuthorId}`;
-    const original = (await chrome.storage.local.get(key))[key] || [];
-    const checked = [];
-    for (const saved of original) {
-      if ((await chrome.storage.local.get('supportAuthorId')).supportAuthorId !== supportAuthorId) break;
-      let summary;
-      let observedThread;
-      try {
-        const { thread } = await parserMessage('read', saved.url);
-        observedThread = thread;
-        if (thread.id !== saved.id) throw new Error('The link redirected to a different Q&A case.');
-        const correctionKey = `thread-${supportAuthorId}-${thread.id}`;
-        const legacyKey = `thread-${thread.id}`;
-        const settings = await chrome.storage.local.get([correctionKey, legacyKey]);
-        const correction = settings[correctionKey] ||
-          (settings[legacyKey]?.supportAuthorId === supportAuthorId ? settings[legacyKey] : null);
-        summary = caseSummary(thread, planAction(thread, { supportAuthorId, actions: correction?.actions || {} }),
-          new Date().toISOString(), supportAuthorId, correction?.actions || {});
-      } catch (error) {
-        summary = { ...saved, error: error.message };
+    const stored = await chrome.storage.local.get(['supportAuthorId', 'supportSite', 'supportProfiles']);
+    const activeSite = normalizeSupportSite(stored.supportSite || 'learn');
+    const sources = ['learn', 'devcommunity'].map((site) => ({ site, profileId: configuredProfileId(stored, site) }))
+      .filter((source) => source.profileId);
+    if (!sources.length && stored.supportAuthorId) sources.push({ site: activeSite, profileId: stored.supportAuthorId });
+    if (!sources.length) return;
+    for (const { site, profileId } of sources) {
+      if (site === 'learn') await discoverSavedCases(profileId, site).catch(console.error);
+      const key = profileStorageKey(profileId, site, 'cases');
+      const original = (await chrome.storage.local.get(key))[key] || [];
+      const checked = [];
+      for (const saved of original) {
+        if (!await profileIsConfigured(profileId, site)) break;
+        let summary;
+        let observedThread;
+        try {
+          const { thread } = await parserMessage('read', saved.url);
+          observedThread = thread;
+          if (thread.id !== saved.id) throw new Error('The link redirected to a different forum case.');
+          const correctionKey = threadStorageKey(profileId, site, thread.id);
+          const legacyKey = threadStorageKey(profileId, 'learn', thread.id);
+          const settings = await chrome.storage.local.get([correctionKey, legacyKey]);
+          const correction = settings[correctionKey] ||
+            (site === 'learn' && settings[legacyKey]?.supportAuthorId === profileId ? settings[legacyKey] : null);
+          summary = caseSummary(thread, planAction(thread, { supportAuthorId: profileId, actions: correction?.actions || {} }),
+            new Date().toISOString(), profileId, correction?.actions || {});
+        } catch (error) {
+          summary = { ...saved, error: error.message };
+        }
+        if (!await profileIsConfigured(profileId, site)) break;
+        const result = await changeCase({ type: 'update', profileId, id: saved.id, expected: saved, summary, site });
+        if (result.applied) checked.push(summary);
+        if (observedThread && !summary.error && observedThread.id === saved.id)
+          await Promise.allSettled([discord.observe(profileId, observedThread, summary, site),
+            teams.observe(profileId, observedThread, site)]);
       }
-      if ((await chrome.storage.local.get('supportAuthorId')).supportAuthorId !== supportAuthorId) break;
-      const result = await changeCase({ type: 'update', profileId: supportAuthorId,
-        id: saved.id, expected: saved, summary });
-      if (result.applied) checked.push(summary);
-      if (observedThread && !summary.error && observedThread.id === saved.id)
-        await Promise.allSettled([discord.observe(supportAuthorId, observedThread, summary),
-          teams.observe(supportAuthorId, observedThread)]);
+      if (await profileIsConfigured(profileId, site)) await notifyDueCases(profileId, checked, site);
     }
-    if ((await chrome.storage.local.get('supportAuthorId')).supportAuthorId === supportAuthorId)
-      await notifyDueCases(supportAuthorId, checked);
     await updateBadge();
   })().finally(() => { refreshing = null; });
   return refreshing;

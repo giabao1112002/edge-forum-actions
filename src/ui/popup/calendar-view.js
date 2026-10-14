@@ -60,7 +60,8 @@ function createCalendarView({ document, state, domain }) {
       for (const { kind, item } of day.events) {
         const event = document.createElement('div');
         event.className = `calendar-event ${calendarEventKind(kind, item, day.key)}`;
-        event.title = `${caseTitle(item)} - ${calendarEventDescription(kind, item)}`;
+        const sourceLabel = item.site === 'devcommunity' ? 'Developer Community' : 'Microsoft Learn';
+        event.title = `${caseTitle(item)} - ${sourceLabel} - ${calendarEventDescription(kind, item)}`;
         const link = document.createElement('a');
         link.href = item.url;
         link.target = '_blank';
@@ -70,7 +71,10 @@ function createCalendarView({ document, state, domain }) {
         link.ariaLabel = `${caseTitle(item)} - ${calendarEventDescription(kind, item)}`;
         const label = document.createElement('span');
         label.textContent = calendarChipLabel(kind, item);
-        event.append(link, label);
+        const source = document.createElement('span');
+        source.className = 'calendar-source';
+        source.textContent = item.site ? sourceLabel : '';
+        event.append(link, label, source);
         events.append(event);
       }
       row.append(date, events);
@@ -94,7 +98,8 @@ function createCalendarView({ document, state, domain }) {
       link.rel = 'noopener noreferrer';
       link.textContent = caseTitle(item);
       const detail = document.createElement('p');
-      detail.textContent = calendarEventDescription(kind, item);
+      detail.textContent = `${calendarEventDescription(kind, item)}${item.site
+        ? ` · Source: ${item.site === 'devcommunity' ? 'Developer Community' : 'Microsoft Learn'}` : ''}`;
       event.append(link, detail);
       agenda.append(event);
     }

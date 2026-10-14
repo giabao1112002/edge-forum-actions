@@ -1,3 +1,17 @@
+function normalizeSupportSite(site = 'learn') {
+  const value = String(site || 'learn').trim().toLowerCase();
+  if (!value || value === 'learn' || value === 'microsoft learn' || value === 'microsoftlearn') return 'learn';
+  if (['devcommunity', 'devcomm', 'developer community', 'developercommunity', 'developercommunity.visualstudio.com'].includes(value)) return 'devcommunity';
+  return 'learn';
+}
+
+function profileStorageKey(profileId, site = 'learn', name = 'cases') {
+  const targetSite = normalizeSupportSite(site);
+  const value = String(profileId || '').trim();
+  if (!value) return `${name}-${targetSite}`;
+  return targetSite === 'learn' ? `${name}-${value}` : `${name}-${targetSite}-${value}`;
+}
+
 function validateDiscordWebhook(value) {
   try {
     const url = new URL(value.trim());
@@ -36,39 +50,47 @@ function createDiscordNotifier(storage, request, scope) {
   }
   return {
     configure: (profileId, settings) => enqueue(async () => {
+      const site = normalizeSupportSite((await storage.get('supportSite')).supportSite || 'learn');
       const webhook = settings.webhook ? validateDiscordWebhook(settings.webhook) : '';
       if (settings.enabled && !webhook) throw new Error('Enter a webhook before enabling Discord.');
-      const key = `discord-${profileId}`;
+      const key = profileStorageKey(profileId, site, 'discord');
       const old = (await storage.get(key))[key];
       const config = { enabled: !!settings.enabled, webhook, includeExcerpt: !!settings.includeExcerpt };
       const reset = !old || old.webhook !== webhook || old.enabled !== config.enabled;
-      await storage.set({ [key]: config, [`discord-status-${profileId}`]: { message: config.enabled
+      await storage.set({ [key]: config, [profileStorageKey(profileId, site, 'discord-status')]: { message: config.enabled
         ? 'Enabled. The first complete check of each case establishes a baseline; old replies will not be sent.' : 'Discord is off.' },
-      ...(reset ? { [`discord-seen-${profileId}`]: {} } : {}) });
+      ...(reset ? { [profileStorageKey(profileId, site, 'discord-seen')]: {} } : {}) });
       return { ok: true };
     }),
     test: (profileId) => enqueue(async () => {
-      const config = (await storage.get(`discord-${profileId}`))[`discord-${profileId}`];
+      const site = normalizeSupportSite((await storage.get('supportSite')).supportSite || 'learn');
+      const configKey = profileStorageKey(profileId, site, 'discord');
+      const statusKey = profileStorageKey(profileId, site, 'discord-status');
+      const config = (await storage.get(configKey))[configKey];
       if (!config?.webhook) throw new Error('Save a webhook first.');
-      const previous = (await storage.get(`discord-status-${profileId}`))[`discord-status-${profileId}`];
+      const previous = (await storage.get(statusKey))[statusKey];
       if (previous?.retryAt > Date.now()) throw new Error('Discord rate limit is active. Try again later.');
       try {
         await send(config.webhook, [{ title: 'Test notification', description: 'Forum Action Planner is connected. No case data is included.' }]);
-        await storage.set({ [`discord-status-${profileId}`]: { message: 'Test notification sent.', sentAt: new Date().toISOString() } });
+        await storage.set({ [statusKey]: { message: 'Test notification sent.', sentAt: new Date().toISOString() } });
         return { ok: true };
       } catch (error) {
-        await storage.set({ [`discord-status-${profileId}`]: { message: error.message, retryAt: error.retryAt || null } });
+        await storage.set({ [statusKey]: { message: error.message, retryAt: error.retryAt || null } });
         throw error;
       }
     }),
-    observe: (profileId, thread, summary) => enqueue(async () => {
-      const configKey = `discord-${profileId}`;
-      const seenKey = `discord-seen-${profileId}`;
-      const statusKey = `discord-status-${profileId}`;
-      const stored = await storage.get(['supportAuthorId', configKey, seenKey, statusKey, `cases-${profileId}`]);
+    observe: (profileId, thread, summary, sourceSite) => enqueue(async () => {
+      const site = normalizeSupportSite(sourceSite || (await storage.get('supportSite')).supportSite || 'learn');
+      const configKey = profileStorageKey(profileId, site, 'discord');
+      const seenKey = profileStorageKey(profileId, site, 'discord-seen');
+      const statusKey = profileStorageKey(profileId, site, 'discord-status');
+      const casesKey = profileStorageKey(profileId, site, 'cases');
+      const stored = await storage.get(['supportAuthorId', 'supportSite', 'supportProfiles', configKey, seenKey, statusKey, casesKey]);
       const config = stored[configKey];
-      if (!config?.enabled || stored.supportAuthorId !== profileId || thread.hasMorePages ||
-          !(stored[`cases-${profileId}`] || []).some((item) => item.id === thread.id)) return;
+      const configuredId = stored.supportProfiles?.[site]?.id ||
+        (normalizeSupportSite(stored.supportSite || 'learn') === site ? stored.supportAuthorId : '');
+      if (!config?.enabled || configuredId !== profileId || thread.hasMorePages ||
+          !(stored[casesKey] || []).some((item) => item.id === thread.id)) return;
       const scoped = scope(thread, profileId);
       const customer = scoped.entries.find((item) => item.type === 'question')?.authorId;
       const firstAnswer = scoped.entries.find((item) => item.type === 'answer' && item.authorId === profileId);
@@ -85,9 +107,11 @@ function createDiscordNotifier(storage, request, scope) {
       const fresh = [...new Map(replies.filter((item) => !history[thread.id].includes(item.id))
         .map((item) => [item.id, item])).values()];
       for (let index = 0; index < fresh.length; index += 10) {
-        const current = await storage.get(['supportAuthorId', configKey, `cases-${profileId}`]);
-        const savedCase = (current[`cases-${profileId}`] || []).find((item) => item.id === thread.id);
-        if (current.supportAuthorId !== profileId || !current[configKey]?.enabled || current[configKey].webhook !== config.webhook ||
+        const current = await storage.get(['supportAuthorId', 'supportSite', 'supportProfiles', configKey, casesKey]);
+        const currentId = current.supportProfiles?.[site]?.id ||
+          (normalizeSupportSite(current.supportSite || 'learn') === site ? current.supportAuthorId : '');
+        const savedCase = (current[casesKey] || []).find((item) => item.id === thread.id);
+        if (currentId !== profileId || !current[configKey]?.enabled || current[configKey].webhook !== config.webhook ||
             !savedCase || savedCase.error) return;
         const batch = fresh.slice(index, index + 10);
         const embeds = batch.map((item) => ({ title: `CX replied · Case ${thread.id}`,

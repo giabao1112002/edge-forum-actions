@@ -1,16 +1,20 @@
-function createSettingsController({ document, chrome, state, resolveSupportProfileDetails, syncProfileCases, loadSettings, casesKey, renderCases, renderThread }) {
+function createSettingsController({ document, chrome, state, resolveSupportProfileDetails, syncProfileCases, loadSettings, loadAllCases, renderCases, renderThread }) {
   const reminderInput = document.getElementById('desktop-reminders');
+  const activeSite = () => normalizeSupportSite(state.supportSite || 'learn');
   async function loadDiscord() {
     const profileId = state.supportAuthorId;
-    const stored = await chrome.storage.local.get([`discord-${profileId}`, `discord-status-${profileId}`]);
+    const site = activeSite();
+    const configKey = profileStorageKey(profileId, site, 'discord');
+    const statusKey = profileStorageKey(profileId, site, 'discord-status');
+    const stored = await chrome.storage.local.get([configKey, statusKey]);
     if (profileId !== state.supportAuthorId) return;
-    const config = stored[`discord-${profileId}`];
+    const config = stored[configKey];
     document.getElementById('discord-webhook').value = config?.webhook || '';
     document.getElementById('discord-enabled').checked = !!config?.enabled;
     document.getElementById('discord-excerpt').checked = !!config?.includeExcerpt;
     document.getElementById('discord-save').disabled = !profileId;
     document.getElementById('discord-test').disabled = !profileId || !config?.webhook;
-    document.getElementById('discord-status').textContent = stored[`discord-status-${profileId}`]?.message || 'Discord is not configured.';
+    document.getElementById('discord-status').textContent = stored[statusKey]?.message || 'Discord is not configured.';
   }
   async function discordAction(type) {
     if (!state.supportAuthorId || state.profileLoading) return;
@@ -40,14 +44,17 @@ function createSettingsController({ document, chrome, state, resolveSupportProfi
   document.getElementById('discord-test').addEventListener('click', () => discordAction('test'));
   async function loadTeams() {
     const profileId = state.supportAuthorId;
-    const stored = await chrome.storage.local.get([`teams-${profileId}`, `teams-status-${profileId}`]);
+    const site = activeSite();
+    const configKey = profileStorageKey(profileId, site, 'teams');
+    const statusKey = profileStorageKey(profileId, site, 'teams-status');
+    const stored = await chrome.storage.local.get([configKey, statusKey]);
     if (profileId !== state.supportAuthorId) return;
-    const config = stored[`teams-${profileId}`];
+    const config = stored[configKey];
     document.getElementById('teams-webhook').value = config?.webhook || '';
     document.getElementById('teams-enabled').checked = !!config?.enabled;
     document.getElementById('teams-save').disabled = !profileId;
     document.getElementById('teams-test').disabled = !profileId || !config?.webhook;
-    document.getElementById('teams-status').textContent = stored[`teams-status-${profileId}`]?.message || 'Teams is not configured.';
+    document.getElementById('teams-status').textContent = stored[statusKey]?.message || 'Teams is not configured.';
   }
   async function teamsAction(type) {
     if (!state.supportAuthorId || state.profileLoading) return;
@@ -75,42 +82,80 @@ function createSettingsController({ document, chrome, state, resolveSupportProfi
   });
   document.getElementById('teams-test').addEventListener('click', () => teamsAction('test'));
   async function loadReminders() {
+    const site = activeSite();
+    const reminderKey = profileStorageKey(state.supportAuthorId, site, 'reminders');
     reminderInput.disabled = !state.supportAuthorId;
-    reminderInput.checked = state.supportAuthorId ? !!(await chrome.storage.local.get(`reminders-${state.supportAuthorId}`))[`reminders-${state.supportAuthorId}`] : false;
+    const stored = state.supportAuthorId ? await chrome.storage.local.get(reminderKey) : {};
+    reminderInput.checked = state.supportAuthorId ? !!stored[reminderKey] : false;
   }
   reminderInput.addEventListener('change', async () => {
-    if (state.supportAuthorId) await chrome.storage.local.set({ [`reminders-${state.supportAuthorId}`]: reminderInput.checked });
+    if (state.supportAuthorId) {
+      const reminderKey = profileStorageKey(state.supportAuthorId, activeSite(), 'reminders');
+      await chrome.storage.local.set({ [reminderKey]: reminderInput.checked });
+    }
   });
-  document.getElementById('profile-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (state.profileLoading) return;
+  async function saveProfileForSite(site, rawInput) {
+    if (!rawInput?.trim()) return;
+    const inputValue = String(rawInput).trim();
+    const nextSite = normalizeSupportSite(site || 'learn');
+    state.profileLoading = true;
+    document.getElementById('message').textContent = nextSite === 'devcommunity'
+      ? 'Checking Developer Community profile...'
+      : 'Checking Microsoft Learn profile...';
     try {
-      state.profileLoading = true;
-      document.getElementById('message').textContent = 'Checking Microsoft Learn profile...';
-      const profile = await resolveSupportProfileDetails(document.getElementById('profile-input').value);
+      const profile = await resolveSupportProfileDetails(inputValue, globalThis.fetch, nextSite);
       const nextId = profile.id;
-      ++state.threadRequest;
-      document.getElementById('thread').hidden = true;
-      document.getElementById('save-case').disabled = true;
+      const profiles = { ...(state.supportProfiles || {}) };
+      profiles[nextSite] = { id: nextId, username: profile.username || '' };
+      state.supportProfiles = profiles;
       state.supportAuthorId = nextId;
-      await chrome.storage.local.set({ supportAuthorId: nextId,
-        ...(profile.username ? { [`profile-name-${nextId}`]: profile.username } : {}) });
+      state.supportSite = nextSite;
+      await chrome.storage.local.set({
+        supportProfiles: profiles,
+        supportAuthorId: nextId,
+        supportSite: nextSite,
+        ...(profile.username ? { [profileStorageKey(nextId, nextSite, 'profile-name')]: profile.username } : {})
+      });
+      document.getElementById('desktop-reminders').checked = false;
+      reminderInput.checked = false;
       await loadReminders();
       await loadDiscord();
       await loadTeams();
-      document.getElementById('profile-label').textContent = nextId;
+      const nextLabel = profiles.learn?.id || profiles.devcommunity?.id || nextId || 'Not set';
+      document.getElementById('profile-label').textContent = nextLabel;
       document.getElementById('profile-section').open = false;
-      state.cases = (await chrome.storage.local.get(casesKey()))[casesKey()] || [];
+      state.cases = await loadAllCases();
       if (state.thread) state.settings = await loadSettings(state.thread.id, nextId);
+      document.getElementById('message').textContent = 'Support profile saved on this device.';
+      renderCases();
+      if (state.thread) renderThread();
+      await syncProfileCases();
+    } catch (error) {
+      document.getElementById('message').textContent = error.message;
+      if (!state.supportAuthorId && state.supportProfiles?.learn?.id) {
+        state.supportAuthorId = state.supportProfiles.learn.id;
+      }
+    } finally {
       state.profileLoading = false;
       renderCases();
       if (state.thread) renderThread();
-      document.getElementById('message').textContent = 'Support profile saved on this device.';
-      await syncProfileCases();
-    } catch (error) {
-      state.profileLoading = false;
-      document.getElementById('message').textContent = error.message;
     }
+  }
+
+  document.getElementById('profile-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const learnValue = document.getElementById('profile-input')?.value || '';
+    const devValue = document.getElementById('profile-input-devcommunity')?.value || '';
+    if (learnValue.trim()) await saveProfileForSite('learn', learnValue);
+    if (devValue.trim() && devValue.trim() !== learnValue.trim()) await saveProfileForSite('devcommunity', devValue);
+  });
+  const saveLearnButton = document.getElementById('profile-save-learn');
+  if (saveLearnButton) saveLearnButton.addEventListener('click', async () => {
+    await saveProfileForSite('learn', document.getElementById('profile-input').value);
+  });
+  const saveDevButton = document.getElementById('profile-save-devcommunity');
+  if (saveDevButton) saveDevButton.addEventListener('click', async () => {
+    await saveProfileForSite('devcommunity', document.getElementById('profile-input-devcommunity').value);
   });
   return { loadDiscord, loadTeams, loadReminders };
 }

@@ -83,8 +83,10 @@ function createThreadView({ document, state, domain, saveAndRender }) {
     document.getElementById('title').textContent = caseTitle(thread);
     document.getElementById('thread-url').value = thread.url;
     const saveButton = document.getElementById('save-case');
-    saveButton.textContent = cases.some((item) => item.id === thread.id) ? 'Saved in My Cases' : 'Save to My Cases';
-    saveButton.disabled = !supportAuthorId || cases.some((item) => item.id === thread.id);
+    const site = normalizeSupportSite(thread.site || state.supportSite || 'learn');
+    const alreadySaved = cases.some((item) => item.id === thread.id && item.site === site);
+    saveButton.textContent = alreadySaved ? 'Saved in My Cases' : 'Save to My Cases';
+    saveButton.disabled = !supportAuthorId || alreadySaved;
     const scoped = scopeThread(thread, supportAuthorId);
     const question = scoped.entries.find((entry) => entry.type === 'question');
     const stage = inferProcessStage(scoped.entries, question?.authorId, supportAuthorId);

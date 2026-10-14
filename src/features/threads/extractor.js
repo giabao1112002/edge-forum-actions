@@ -37,4 +37,38 @@ function extractForumThread(page = document, pageUrl = location.href) {
     acceptedAnswerId,
     hasMorePages: Number(page.querySelector('meta[name="pageCount"]')?.content || 1) > 1 };
 }
-if (typeof module !== 'undefined') module.exports = { extractForumThread };
+function extractDeveloperCommunityThread(data, pageUrl) {
+  if (!data || data.type !== 0 || !data.author || !Array.isArray(data.children))
+    throw new Error('Developer Community returned an invalid thread.');
+  const url = new URL(pageUrl);
+  const match = url.pathname.match(/^\/t\/(?:[^/]+\/)?(\d+)(?:\/|$)/i);
+  if (url.hostname !== 'developercommunity.visualstudio.com' || !match || String(data.id) !== match[1])
+    throw new Error('Invalid Developer Community thread data.');
+  const entries = [];
+  const add = (post, type) => {
+    if (post.isDeleted) return;
+    const timestamp = Date.parse(post.createdDate || '');
+    if (!Number.isFinite(timestamp)) return;
+    const content = String(post.text || '').trim();
+    entries.push({ id: String(post.id), type, parentAnswerId: null,
+      authorId: post.author?.id == null ? '' : String(post.author.id),
+      author: String(post.author?.name || 'Unknown'), timestamp: new Date(timestamp).toISOString(),
+      content, excerpt: content.slice(0, 170) });
+  };
+  add(data, 'question');
+  const posts = [];
+  const collect = (children) => {
+    for (const child of children || []) {
+      posts.push(child);
+      collect(child.children);
+    }
+  };
+  collect(data.children);
+  for (const post of posts) add(post, post.type === 3 ? 'answer' : 'comment');
+  entries.sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+  const solution = posts.find((post) => post.type === 3 && !post.isDeleted);
+  return { id: String(data.id), url: `${url.origin}${url.pathname}`, title: String(data.title || 'Developer Community thread'),
+    entries, acceptedAnswerId: solution ? String(solution.id) : null, hasMorePages: false, site: 'devcommunity' };
+}
+
+if (typeof module !== 'undefined') module.exports = { extractForumThread, extractDeveloperCommunityThread };

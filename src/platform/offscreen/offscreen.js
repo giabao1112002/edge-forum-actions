@@ -18,9 +18,21 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message.type !== 'read') return;
   (async () => {
     const url = new URL(message.url);
-    if (url.protocol !== 'https:' || url.hostname !== 'learn.microsoft.com' ||
+    if (url.protocol !== 'https:') throw new Error('Thread links must use HTTPS.');
+    const communityMatch = url.hostname === 'developercommunity.visualstudio.com' &&
+      url.pathname.match(/^\/t\/(?:[^/]+\/)?(\d+)(?:\/|$)/i);
+    if (communityMatch) {
+      const endpoint = `https://sendvsfeedback2.azurewebsites.net/api/detailsV3/rootPost?id=${communityMatch[1]}`;
+      const response = await fetch(endpoint, { credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(30000) });
+      if (!response.ok) throw new Error(`Developer Community request failed (${response.status}).`);
+      const data = await response.json();
+      const thread = extractDeveloperCommunityThread(data, url.href);
+      if (!thread.entries.length) throw new Error('No dated Developer Community activity found.');
+      return thread;
+    }
+    if (url.hostname !== 'learn.microsoft.com' ||
         !/^\/[a-z]{2}-[a-z]{2}\/answers\/questions\/\d+(?:\/|$)/i.test(url.pathname))
-      throw new Error('Invalid Microsoft Q&A case link.');
+      throw new Error('Invalid Microsoft Q&A or Developer Community thread link.');
     const response = await fetch(url.href, { credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(30000) });
     if (!response.ok) throw new Error(`Thread request failed (${response.status}).`);
     const thread = extractForumThread(new DOMParser().parseFromString(await response.text(), 'text/html'), response.url);

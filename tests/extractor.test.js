@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { extractForumThread } = require('../src/features/threads/extractor');
+const { extractForumThread, extractDeveloperCommunityThread } = require('../src/features/threads/extractor');
 
 test('extracts question metadata and answer/comment activity in chronological order', () => {
   const author = (id, name) => ({ getAttribute: () => id, querySelector: () => ({ textContent: name }) });
@@ -83,4 +83,30 @@ test('finds accepted answer even when it is a div rather than a list item', () =
   const result = extractForumThread(page, 'https://learn.microsoft.com/en-us/answers/questions/6010432/example');
   assert.equal(result.acceptedAnswerId, 'answer-12969131');
   assert.equal(result.entries.find((entry) => entry.id === result.acceptedAnswerId).authorId, 'brian');
+});
+
+test('maps Developer Community rootPost data into question, comment, and solution entries', () => {
+  const data = {
+    id: 11163679,
+    title: 'Sample Community issue',
+    type: 0,
+    author: { id: 1069155, name: 'Customer' },
+    text: 'Question body',
+    createdDate: '2026-10-09T14:25:52.9133333Z',
+    children: [
+      { id: 11164172, type: 2, author: { id: 1730167, name: 'Engineer' }, text: 'Support response',
+        createdDate: '2026-10-12T03:28:26.5266667Z', children: [] },
+      { id: 11164630, type: 3, author: { id: 1730167, name: 'Engineer' }, text: 'Solution text',
+        createdDate: '2026-10-12T10:29:56.9366667Z', children: [] }
+    ]
+  };
+  const result = extractDeveloperCommunityThread(data,
+    'https://developercommunity.visualstudio.com/t/sample/11163679?viewtype=all');
+  assert.equal(result.id, '11163679');
+  assert.equal(result.url, 'https://developercommunity.visualstudio.com/t/sample/11163679');
+  assert.equal(result.title, 'Sample Community issue');
+  assert.deepEqual(result.entries.map((entry) => entry.type), ['question', 'comment', 'answer']);
+  assert.equal(result.entries[1].authorId, '1730167');
+  assert.equal(result.entries[2].timestamp, '2026-10-12T10:29:56.936Z');
+  assert.equal(result.acceptedAnswerId, '11164630');
 });

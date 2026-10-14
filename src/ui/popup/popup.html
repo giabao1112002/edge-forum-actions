@@ -9,7 +9,7 @@
 <body>
   <main>
     <header class="app-header">
-      <div><p class="eyebrow">MICROSOFT LEARN Q&A</p><h1>Forum Action Planner</h1></div>
+      <div><p class="eyebrow">LEARN Q&A + DEVELOPER COMMUNITY</p><h1>Forum Action Planner</h1></div>
       <span class="mode-badge">Read-only</span>
     </header>
     <nav class="tabbar" role="tablist" aria-label="Planner sections">
@@ -23,7 +23,7 @@
     <div id="panel-thread" role="tabpanel" aria-labelledby="tab-thread" tabindex="0">
     <form id="url-form" class="panel thread-search">
       <label for="thread-url">Read a thread</label>
-      <div class="row"><input id="thread-url" type="url" placeholder="Paste a Microsoft Learn Q&A link" required><button type="submit">Read</button></div>
+      <div class="row"><input id="thread-url" type="url" placeholder="Paste a Learn or Developer Community link" required><button type="submit">Read</button></div>
     </form>
     <section id="thread" class="panel" hidden aria-labelledby="thread-heading">
       <div class="section-heading"><h2 id="thread-heading">Current thread</h2><span class="section-note">Next action</span></div>
@@ -91,9 +91,15 @@
       <summary>Settings <span class="section-note">Profile &amp; reminders</span></summary>
       <p class="profile-status">Support profile: <span id="profile-label">Not set</span></p>
       <form id="profile-form">
-        <label for="profile-input">Microsoft Learn profile link or user ID</label>
-        <div class="row"><input id="profile-input" type="text" autocomplete="off" placeholder="Profile link or user ID"><button type="submit">Save</button></div>
-        <p class="hint">Paste your Microsoft Learn profile link, with or without ?userid, to find your recent Q&amp;A cases automatically. An ID alone calculates saved cases but cannot find new ones. Saved in this browser.</p>
+        <div class="profile-source-block">
+          <label for="profile-input">Microsoft Learn profile link or user ID</label>
+          <div class="row"><input id="profile-input" type="text" autocomplete="off" placeholder="Learn profile link or user ID"><button id="profile-save-learn" type="button" data-site="learn">Save Learn</button></div>
+        </div>
+        <div class="profile-source-block">
+          <label for="profile-input-devcommunity">Developer Community profile link or user ID</label>
+          <div class="row"><input id="profile-input-devcommunity" type="text" autocomplete="off" placeholder="Dev Community profile link or user ID"><button id="profile-save-devcommunity" type="button" data-site="devcommunity">Save DevCom</button></div>
+        </div>
+        <p class="hint">A single user can keep both a Learn profile and a Developer Community profile. Each source is saved separately, but the case list still shows which site each thread belongs to.</p>
         <p id="activity-sync-status" class="hint" role="status"></p>
       </form>
       <label class="reminder-option"><input id="desktop-reminders" type="checkbox"> Desktop reminders</label>

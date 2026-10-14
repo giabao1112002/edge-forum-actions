@@ -237,6 +237,97 @@ test('opening the popup checks saved cases automatically and keeps manual refres
   assert.equal(get('today-list').children[0].textContent, 'No action scheduled today from saved cases.');
 });
 
+test('My Cases combines Learn and Developer Community while mutations stay source-scoped', async () => {
+  const elements = new Map();
+  const document = {
+    getElementById: (id) => {
+      if (!elements.has(id)) elements.set(id, new Element());
+      return elements.get(id);
+    },
+    createElement: () => new Element()
+  };
+  const learnId = '696f09c3-51ea-4371-99ea-14d4c83bead8';
+  const communityId = '12345';
+  const saved = {
+    supportAuthorId: learnId,
+    supportSite: 'learn',
+    supportProfiles: {
+      learn: { id: learnId },
+      devcommunity: { id: communityId }
+    },
+    [`cases-${learnId}`]: [{ id: '1001', title: 'Learn thread', url: 'https://learn.microsoft.com/en-us/answers/questions/1001/test',
+      action: 'Review needed', tone: 'neutral', site: 'learn' }],
+    [`cases-devcommunity-${communityId}`]: [{ id: '2002', title: 'Community thread', url: 'https://developercommunity.visualstudio.com/t/test/2002',
+      action: 'Review needed', tone: 'neutral', site: 'devcommunity' }]
+  };
+  const chrome = {
+    storage: { local: {
+      get: async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys])
+        .filter((key) => Object.hasOwn(saved, key)).map((key) => [key, saved[key]])),
+      set: async (values) => Object.assign(saved, values)
+    } },
+    tabs: { query: async () => [] }
+  };
+  const changeCase = createCaseStore(chrome.storage.local);
+  chrome.runtime = { sendMessage: async (change) => changeCase(change) };
+  const context = vm.createContext({ document, chrome, URL, Date, encodeURIComponent });
+  loadPopup(context);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const get = document.getElementById;
+  assert.equal(get('case-count').textContent, 2);
+  const reviewGroup = get('case-list').children.find((group) => group.className === 'case-group review');
+  const cards = reviewGroup.children.slice(1);
+  const communityCard = cards.find((card) => card.children[0].href.includes('developercommunity'));
+  const learnCard = cards.find((card) => card.children[0].href.includes('learn.microsoft.com'));
+  assert.ok(communityCard);
+  assert.ok(learnCard);
+  assert.match(communityCard.children[1].textContent, /Developer Community/);
+  assert.match(learnCard.children[1].textContent, /Microsoft Learn/);
+
+  await communityCard.children[3].handlers.click();
+  await communityCard.children[4].handlers.click();
+  assert.equal(saved[`cases-devcommunity-${communityId}`].length, 0);
+  assert.equal(saved[`cases-${learnId}`].length, 1);
+  assert.equal(get('case-count').textContent, 1);
+});
+
+test('popup reads and saves a Developer Community thread under its matching profile', async () => {
+  const app = await racePopup();
+  const communityId = '1730167';
+  const url = 'https://developercommunity.visualstudio.com/t/sample/11163679';
+  const thread = { id: '11163679', url, title: 'Community issue', site: 'devcommunity', entries: [
+    { id: '11163679', type: 'question', authorId: '1069155', timestamp: '2026-10-09T14:25:52.913Z' },
+    { id: '11164172', type: 'comment', authorId: communityId, timestamp: '2026-10-12T03:28:26.526Z' }
+  ] };
+  const profiles = { learn: { id: app.profileId }, devcommunity: { id: communityId } };
+  const learnCase = { id: '11163679', title: 'Learn thread with same ID',
+    url: 'https://learn.microsoft.com/en-us/answers/questions/11163679/test', action: 'Review needed',
+    tone: 'neutral', site: 'learn' };
+  app.saved.supportProfiles = profiles;
+  app.saved[`cases-${app.profileId}`] = [learnCase];
+  app.context.profiles = profiles;
+  app.context.learnCase = learnCase;
+  vm.runInContext('state.supportProfiles = profiles; state.cases = [learnCase]', app.context);
+  const originalSend = app.chrome.runtime.sendMessage;
+  let requested;
+  app.chrome.runtime.sendMessage = async (change) => {
+    if (change.target === 'forum-thread-read') {
+      requested = change.url;
+      return { thread };
+    }
+    return originalSend(change);
+  };
+
+  await app.context.loadThread(url);
+  assert.equal(requested, url);
+  assert.equal(app.document.getElementById('title').textContent, '11163679 - Community issue');
+  await app.document.getElementById('save-case').handlers.click();
+  assert.equal(app.saved[`cases-devcommunity-${communityId}`][0].site, 'devcommunity');
+  assert.equal(app.saved[`cases-${app.profileId}`][0].site, 'learn');
+  assert.equal(app.document.getElementById('case-count').textContent, 2);
+});
+
 test('Refresh cases rereads every saved link and keeps failed checks visibly marked', async () => {
   const elements = new Map();
   const document = {

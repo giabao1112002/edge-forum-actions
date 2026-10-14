@@ -1,3 +1,10 @@
+function detectThreadSite(url = '', fallback = 'learn') {
+  const value = String(url || '').trim().toLowerCase();
+  if (!value) return fallback;
+  if (value.includes('developercommunity.visualstudio.com') || value.includes('devcommunity')) return 'devcommunity';
+  return 'learn';
+}
+
 function caseSummary(thread, result, checkedAt, supportAuthorId, actions = {}) {
   const ownAnswers = new Set(thread.entries.filter((entry) => entry.type === 'answer' && entry.authorId === supportAuthorId)
     .map((entry) => entry.id));
@@ -13,6 +20,7 @@ function caseSummary(thread, result, checkedAt, supportAuthorId, actions = {}) {
     : evidence === 'Your first answer' ? 'First answer' : null;
   return { id: thread.id, url: thread.url, title: thread.title, action: result.action,
     due: result.due || null, predictedClose: result.predictedClose || null, tone: result.tone, checkedAt,
+    site: detectThreadSite(thread.url, thread.site || 'learn'),
     lastSupportPost: lastPost ? { timestamp: lastPost.timestamp, type: lastPost.type, step } : null };
 }
 

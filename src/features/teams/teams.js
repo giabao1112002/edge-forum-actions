@@ -1,3 +1,17 @@
+function normalizeSupportSite(site = 'learn') {
+  const value = String(site || 'learn').trim().toLowerCase();
+  if (!value || value === 'learn' || value === 'microsoft learn' || value === 'microsoftlearn') return 'learn';
+  if (['devcommunity', 'devcomm', 'developer community', 'developercommunity', 'developercommunity.visualstudio.com'].includes(value)) return 'devcommunity';
+  return 'learn';
+}
+
+function profileStorageKey(profileId, site = 'learn', name = 'cases') {
+  const targetSite = normalizeSupportSite(site);
+  const value = String(profileId || '').trim();
+  if (!value) return `${name}-${targetSite}`;
+  return targetSite === 'learn' ? `${name}-${value}` : `${name}-${targetSite}-${value}`;
+}
+
 function validateTeamsWebhook(value) {
   try {
     const url = new URL(String(value).trim());
@@ -21,8 +35,11 @@ function teamsCard(title, lines, link = '') {
 function teamsThreadLink(thread, entryId) {
   try {
     const url = new URL(thread.url);
-    if (url.protocol === 'https:' && url.hostname === 'learn.microsoft.com' &&
-        /^\/[a-z]{2}-[a-z]{2}\/answers\/questions\/\d+(?:\/|$)/i.test(url.pathname))
+    const learnThread = url.hostname === 'learn.microsoft.com' &&
+      /^\/[a-z]{2}-[a-z]{2}\/answers\/questions\/\d+(?:\/|$)/i.test(url.pathname);
+    const communityThread = url.hostname === 'developercommunity.visualstudio.com' &&
+      /^\/t\/(?:[^/]+\/)?\d+(?:\/|$)/i.test(url.pathname);
+    if (url.protocol === 'https:' && (learnThread || communityThread))
       return `${url.origin}${url.pathname}#${encodeURIComponent(entryId)}`;
   } catch {}
   return '';
@@ -53,38 +70,46 @@ function createTeamsNotifier(storage, request, scope) {
   }
   return {
     configure: (profileId, settings) => enqueue(async () => {
+      const site = normalizeSupportSite((await storage.get('supportSite')).supportSite || 'learn');
       const webhook = settings.webhook ? validateTeamsWebhook(settings.webhook) : '';
       if (settings.enabled && !webhook) throw new Error('Enter a Teams Workflow webhook before enabling Teams.');
-      const key = `teams-${profileId}`;
+      const key = profileStorageKey(profileId, site, 'teams');
       const old = (await storage.get(key))[key];
       const config = { enabled: !!settings.enabled, webhook };
       const reset = !old || old.webhook !== webhook || old.enabled !== config.enabled;
-      await storage.set({ [key]: config, [`teams-status-${profileId}`]: { message: config.enabled
+      await storage.set({ [key]: config, [profileStorageKey(profileId, site, 'teams-status')]: { message: config.enabled
         ? 'Enabled. The first check establishes a baseline; old replies and accepted answers will not be sent.' : 'Teams is off.' },
-      ...(reset ? { [`teams-seen-${profileId}`]: {}, [`teams-accepted-${profileId}`]: {} } : {}) });
+      ...(reset ? { [profileStorageKey(profileId, site, 'teams-seen')]: {}, [profileStorageKey(profileId, site, 'teams-accepted')]: {} } : {}) });
       return { ok: true };
     }),
     test: (profileId) => enqueue(async () => {
-      const config = (await storage.get(`teams-${profileId}`))[`teams-${profileId}`];
+      const site = normalizeSupportSite((await storage.get('supportSite')).supportSite || 'learn');
+      const configKey = profileStorageKey(profileId, site, 'teams');
+      const statusKey = profileStorageKey(profileId, site, 'teams-status');
+      const config = (await storage.get(configKey))[configKey];
       if (!config?.webhook) throw new Error('Save a Teams Workflow webhook first.');
       try {
         await send(config.webhook, teamsCard('Test notification', ['Forum Action Planner is connected. No case data is included.']));
-        await storage.set({ [`teams-status-${profileId}`]: { message: 'Workflow accepted the test request. Check the chat and run history.', sentAt: new Date().toISOString() } });
+        await storage.set({ [statusKey]: { message: 'Workflow accepted the test request. Check the chat and run history.', sentAt: new Date().toISOString() } });
         return { ok: true };
       } catch (error) {
-        await storage.set({ [`teams-status-${profileId}`]: { message: error.message, retryAt: error.retryAt || null } });
+        await storage.set({ [statusKey]: { message: error.message, retryAt: error.retryAt || null } });
         throw error;
       }
     }),
-    observe: (profileId, thread) => enqueue(async () => {
-      const configKey = `teams-${profileId}`;
-      const seenKey = `teams-seen-${profileId}`;
-      const acceptedKey = `teams-accepted-${profileId}`;
-      const statusKey = `teams-status-${profileId}`;
-      const stored = await storage.get(['supportAuthorId', configKey, seenKey, acceptedKey, statusKey, `cases-${profileId}`]);
+    observe: (profileId, thread, sourceSite) => enqueue(async () => {
+      const site = normalizeSupportSite(sourceSite || (await storage.get('supportSite')).supportSite || 'learn');
+      const configKey = profileStorageKey(profileId, site, 'teams');
+      const seenKey = profileStorageKey(profileId, site, 'teams-seen');
+      const acceptedKey = profileStorageKey(profileId, site, 'teams-accepted');
+      const statusKey = profileStorageKey(profileId, site, 'teams-status');
+      const casesKey = profileStorageKey(profileId, site, 'cases');
+      const stored = await storage.get(['supportAuthorId', 'supportSite', 'supportProfiles', configKey, seenKey, acceptedKey, statusKey, casesKey]);
       const config = stored[configKey];
-      if (!config?.enabled || stored.supportAuthorId !== profileId ||
-          !(stored[`cases-${profileId}`] || []).some((item) => item.id === thread.id)) return;
+      const configuredId = stored.supportProfiles?.[site]?.id ||
+        (normalizeSupportSite(stored.supportSite || 'learn') === site ? stored.supportAuthorId : '');
+      if (!config?.enabled || configuredId !== profileId ||
+          !(stored[casesKey] || []).some((item) => item.id === thread.id)) return;
       const acceptedAnswer = thread.entries.find((entry) => entry.type === 'answer' &&
         entry.id === thread.acceptedAnswerId && entry.authorId === profileId);
       const acceptedHistory = stored[acceptedKey] || {};
@@ -93,9 +118,11 @@ function createTeamsNotifier(storage, request, scope) {
         await storage.set({ [acceptedKey]: acceptedHistory });
       } else if (acceptedAnswer && !acceptedHistory[thread.id].includes(acceptedAnswer.id)) {
         if (stored[statusKey]?.retryAt > Date.now()) return;
-        const current = await storage.get(['supportAuthorId', configKey, `cases-${profileId}`]);
-        const savedCase = (current[`cases-${profileId}`] || []).find((item) => item.id === thread.id);
-        if (current.supportAuthorId !== profileId || !current[configKey]?.enabled ||
+        const current = await storage.get(['supportAuthorId', 'supportSite', 'supportProfiles', configKey, casesKey]);
+        const currentId = current.supportProfiles?.[site]?.id ||
+          (normalizeSupportSite(current.supportSite || 'learn') === site ? current.supportAuthorId : '');
+        const savedCase = (current[casesKey] || []).find((item) => item.id === thread.id);
+        if (currentId !== profileId || !current[configKey]?.enabled ||
             current[configKey].webhook !== config.webhook || !savedCase || savedCase.error) return;
         try {
           await send(config.webhook, teamsCard(`Your answer was accepted · Case ${thread.id}`,
@@ -127,9 +154,11 @@ function createTeamsNotifier(storage, request, scope) {
       const fresh = [...new Map(replies.filter((item) => !history[thread.id].includes(item.id))
         .map((item) => [item.id, item])).values()];
       for (let index = 0; index < fresh.length; index += 10) {
-        const current = await storage.get(['supportAuthorId', configKey, `cases-${profileId}`]);
-        const savedCase = (current[`cases-${profileId}`] || []).find((item) => item.id === thread.id);
-        if (current.supportAuthorId !== profileId || !current[configKey]?.enabled || current[configKey].webhook !== config.webhook ||
+        const current = await storage.get(['supportAuthorId', 'supportSite', 'supportProfiles', configKey, casesKey]);
+        const currentId = current.supportProfiles?.[site]?.id ||
+          (normalizeSupportSite(current.supportSite || 'learn') === site ? current.supportAuthorId : '');
+        const savedCase = (current[casesKey] || []).find((item) => item.id === thread.id);
+        if (currentId !== profileId || !current[configKey]?.enabled || current[configKey].webhook !== config.webhook ||
             !savedCase || savedCase.error) return;
         const batch = fresh.slice(index, index + 10);
         const link = teamsThreadLink(thread, batch[0].id);

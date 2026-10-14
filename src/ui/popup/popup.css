@@ -14,6 +14,8 @@ input, select, button { font: inherit; padding: 8px; border-radius: 6px; border:
 input { width: 100%; min-width: 0; }
 select { width: 100%; background: white; }
 button { background: #155bb6; border-color: #155bb6; color: white; cursor: pointer; }
+.profile-source-block + .profile-source-block { margin-top: 18px; }
+.site-tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #155bb6; background: #edf4ff; border: 1px solid #cfe0ff; border-radius: 999px; padding: 3px 8px; margin: 0 0 6px; }
 #message { color: #9d351b; }
 #result { padding: 13px; border-radius: 8px; border: 1px solid #c4ceda; background: white; }
 #result h3 { margin: 0 0 4px; }

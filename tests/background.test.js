@@ -219,6 +219,39 @@ test('popup mutation messages use the same serialized store and reject foreign s
   assert.equal(app.saved[`cases-${profileId}`].length, 0);
 });
 
+test('popup thread reads are forwarded to the offscreen parser', async () => {
+  const app = background({ supportAuthorId: profileId });
+  const communityUrl = 'https://developercommunity.visualstudio.com/t/sample/1234';
+  const result = await new Promise((resolve) => {
+    assert.equal(app.listeners.message({ target: 'forum-thread-read', url: communityUrl }, { id: 'test' }, resolve), true);
+  });
+  assert.equal(result.thread.id, '1234');
+});
+
+test('background refreshes and notifies both configured site profiles', async () => {
+  const communityId = '1730167';
+  const communityUrl = 'https://developercommunity.visualstudio.com/t/sample/5678';
+  const communityCase = { id: '5678', url: communityUrl, title: 'Community case', action: 'Review needed',
+    due: '2026-09-30', tone: 'overdue', site: 'devcommunity', checkedAt: '2026-09-29T12:00:00Z' };
+  const communityThread = { id: '5678', url: communityUrl, title: 'Community case', site: 'devcommunity', entries: [
+    { id: '5678', type: 'question', authorId: 'customer', timestamp: '2026-09-24T10:00:00Z' },
+    { id: 'answer-5678', type: 'answer', authorId: communityId, timestamp: '2026-09-25T10:00:00Z' }
+  ] };
+  const app = background({ supportAuthorId: profileId, supportSite: 'learn',
+    supportProfiles: { learn: { id: profileId }, devcommunity: { id: communityId } },
+    [`cases-${profileId}`]: [dueCase], [`cases-devcommunity-${communityId}`]: [communityCase],
+    [`reminders-devcommunity-${communityId}`]: true });
+  app.setThreads([[url, thread], [communityUrl, communityThread]]);
+
+  await app.context.refreshSavedCases();
+
+  assert.notEqual(app.saved[`cases-devcommunity-${communityId}`][0].checkedAt, communityCase.checkedAt);
+  assert.equal(app.saved[`cases-devcommunity-${communityId}`][0].site, 'devcommunity');
+  assert.ok(app.notifications.some((notification) => notification.id === `forum-due-devcommunity-${communityId}`),
+    JSON.stringify({ notifications: app.notifications, communityCase: app.saved[`cases-devcommunity-${communityId}`] }));
+  assert.equal(app.badges.at(-1), '2');
+});
+
 test('Discord background checks baseline then send newly observed customer replies once', async () => {
   const app = background({ supportAuthorId: profileId, [`cases-${profileId}`]: [dueCase] });
   const sends = [];

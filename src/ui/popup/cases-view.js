@@ -61,7 +61,8 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
           : status === 'upcoming' && item.action === 'Follow up with customer' ? 'Customer replied - respond now'
           : status === 'upcoming' && item.action.includes('strike') ? 'Waiting for customer'
           : { overdue: 'Overdue', today: 'Due today', upcoming: 'Upcoming', completed: 'Completed (verify CI)', neutral: 'Review needed' }[status];
-        summary.textContent = `${item.error ? 'Last known · ' : ''}${label}: ${item.action}${item.due ? ` · ${item.due}` : ''}`;
+        const siteLabel = item.site === 'devcommunity' ? 'Developer Community' : 'Microsoft Learn';
+        summary.textContent = `${item.error ? 'Last known · ' : ''}${label}: ${item.action}${item.due ? ` · ${item.due}` : ''}${item.site ? ` • Source: ${siteLabel}` : ''}`;
         const checked = document.createElement('p');
         checked.className = 'hint';
         checked.textContent = `Last checked: ${item.checkedAt ? new Date(item.checkedAt).toLocaleString() : 'never'}${item.error ? ` · Refresh failed: ${item.error}` : ''}`;
@@ -89,7 +90,7 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
         confirm.addEventListener('click', async () => {
           if (!awaitingConfirmation) return;
           confirm.disabled = true;
-          await persistCases({ type: 'remove', id: item.id });
+          await persistCases({ type: 'remove', id: item.id, site: item.site || 'learn' });
           if (state.thread?.id === item.id) renderThread();
         });
         card.append(link, summary, checked, remove, confirm, warning);
@@ -119,6 +120,11 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
       link.rel = 'noopener noreferrer';
       link.textContent = caseTitle(item);
       card.append(link);
+      const source = item.site ? document.createElement('p') : null;
+      if (source) {
+        source.className = 'hint';
+        source.textContent = `Source: ${item.site === 'devcommunity' ? 'Developer Community' : 'Microsoft Learn'}`;
+      }
       if (postedToday(item) && item.action !== 'Follow up with customer') {
         const completed = document.createElement('p');
         completed.className = item.lastSupportPost.step ? 'step-complete' : 'hint';
@@ -129,6 +135,7 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
         card.append(completed);
       }
       if (activity === 'posted') {
+        if (source) card.append(source);
         list.append(card);
         continue;
       }
@@ -141,6 +148,7 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
         : activity === 'overdue' ? `Overdue - act immediately (${item.due})`
         : `Due today (${item.due})`}`;
       card.append(detail);
+      if (source) card.append(source);
       list.append(card);
     }
   }

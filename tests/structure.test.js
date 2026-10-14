@@ -11,6 +11,7 @@ test('MV3 entrypoints, HTML assets, worker imports and runtime URLs resolve from
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.background.service_worker, 'src/platform/background/background.js');
   assert.equal(manifest.action.default_popup, 'src/ui/popup/popup.html');
+  assert.ok(manifest.host_permissions.includes('https://sendvsfeedback2.azurewebsites.net/api/*'));
   for (const path of [manifest.background.service_worker, manifest.action.default_popup])
     assert.ok(existsSync(resolve(root, path)), path);
   for (const name of ['popup.html', 'src/platform/offscreen/offscreen.html']) {
@@ -57,6 +58,7 @@ test('offscreen HTML loads its extractor before registering the parser listener'
   for (const path of htmlScripts('src/platform/offscreen/offscreen.html'))
     vm.runInContext(readFileSync(path, 'utf8'), context, { filename: path });
   assert.equal(typeof context.extractForumThread, 'function');
+  assert.equal(typeof context.extractDeveloperCommunityThread, 'function');
   assert.equal(typeof listener, 'function');
   assert.equal(listener({ target: 'unrelated' }, {}, () => assert.fail('Unexpected response')), undefined);
 });
