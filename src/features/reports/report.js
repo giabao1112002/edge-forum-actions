@@ -2,15 +2,22 @@ function buildHandoverCase(thread, result, profileId, scope, ownerFallback = '')
   const scoped = scope(thread, profileId);
   const question = scoped.entries.find((entry) => entry.type === 'question');
   const owner = thread.entries.find((entry) => entry.authorId === profileId && entry.author && entry.author !== 'Unknown');
-  const shorten = (value, limit = 320) => {
-    const text = String(value || '').replace(/\s+/g, ' ').trim();
-    return text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text;
+  const brief = (value, limit = 160) => {
+    const text = String(value || '').replace(/\s+/g, ' ').trim()
+      .replace(/^(?:hi|hello|dear)\s+@?[^.!?]{1,60}[,.!?]\s*/i, '')
+      .replace(/^thank you for (?:sharing|your response)[^.!?]{0,100}[.!?]\s*/i, '');
+    if (text.length <= limit) return text;
+    const cut = text.slice(0, limit + 1).lastIndexOf(' ');
+    return `${text.slice(0, cut > limit / 2 ? cut : limit).trimEnd()}...`;
   };
-  const exchanges = scoped.entries.filter((entry) => entry.type !== 'question').map((entry) => ({
-    role: entry.authorId === profileId ? 'Owner' : 'Customer',
-    date: entry.timestamp?.slice(0, 10) || 'Date unknown',
-    text: shorten(entry.content || entry.excerpt || '(No readable text)')
-  }));
+  const ownerEntries = scoped.entries.filter((entry) => entry.authorId === profileId && entry.type !== 'question');
+  const isRoutineFollowUp = (entry) => /haven.t heard back|just wanted to check|checking in|following up|follow.up reminder|feel free to reach out/i
+    .test(entry.content || entry.excerpt || '');
+  const ownerUpdate = [...ownerEntries].reverse().find((entry) => !isRoutineFollowUp(entry)) || ownerEntries[0];
+  const customerUpdate = [...scoped.entries].reverse().find((entry) => entry.type !== 'question' &&
+    entry.authorId === question?.authorId);
+  const questionText = question?.content || question?.excerpt || '';
+  const customerNeed = questionText.length >= 25 || questionText.includes(' ') ? questionText : thread.title;
   const action = result.action;
   const status = action === 'Follow up with customer' ? 'Customer replied; owner response pending'
     : action === 'Post first strike comment' ? 'Waiting for customer response; first strike scheduled'
@@ -25,8 +32,8 @@ function buildHandoverCase(thread, result, profileId, scope, ownerFallback = '')
     : 'Open the thread and review the next action.';
   return { id: thread.id, url: thread.url, title: thread.title, ownerName: owner?.author || ownerFallback || 'Name unavailable',
     action, due: result.due || null, status, nextStep,
-    detail: { customerNeed: shorten(question?.content || question?.excerpt || thread.title, 500),
-      exchanges, incomplete: !!thread.hasMorePages } };
+    detail: { customerNeed: brief(customerNeed), ownerUpdate: brief(ownerUpdate?.content || ownerUpdate?.excerpt),
+      customerUpdate: brief(customerUpdate?.content || customerUpdate?.excerpt), incomplete: !!thread.hasMorePages } };
 }
 
 function buildLeaveReport(cases, profileId, start, end, now = new Date()) {
@@ -55,21 +62,24 @@ function buildLeaveReport(cases, profileId, start, end, now = new Date()) {
     .sort((left, right) => left.due.localeCompare(right.due) || String(left.id).localeCompare(String(right.id)));
   const cards = pending.map((item) => {
     const detail = item.detail || {};
-    const exchanges = (detail.exchanges || []).map((entry) => `<li><strong>${escape(entry.role)} · ${escape(entry.date)}:</strong> ${escape(entry.text)}</li>`).join('');
+    const summary = [
+      ['Customer request', detail.customerNeed],
+      ['Owner response', detail.ownerUpdate],
+      ['Latest customer update', detail.customerUpdate]
+    ].filter(([, value]) => value).map(([label, value]) => `<p><strong>${label}:</strong> ${escape(value)}</p>`).join('');
     const note = item.sourceError ? `<p class="warning">Could not refresh this thread: ${escape(item.sourceError)}. Open the link before acting.</p>` :
       detail.incomplete ? '<p class="warning">This thread has more pages. Open the full thread before acting.</p>' : '';
     return `<article class="case"><h2>Thread ${escape(item.id)} · ${escape(item.title || '')}</h2>
 <dl><dt>Thread ID</dt><dd>${escape(item.id)}</dd><dt>Thread Link</dt><dd>${safeLink(item)}</dd>
 <dt>Owner name</dt><dd>${escape(item.ownerName || 'Name unavailable')}</dd>
 <dt>Current status</dt><dd>${escape(item.status || 'Needs review')}</dd>
-<dt>Detail</dt><dd><p><strong>Customer need:</strong> ${escape(detail.customerNeed || 'Open the thread to review the customer request.')}</p>
-${exchanges ? `<ol>${exchanges}</ol>` : '<p>Conversation summary unavailable; open the thread.</p>'}${note}</dd>
+<dt>Detail</dt><dd>${summary || '<p>Brief summary unavailable; open the thread.</p>'}${note}</dd>
 <dt>Suggested Nextstep</dt><dd>${escape(item.nextStep || item.action)}${item.due ? ` <strong>Due ${escape(item.due)}</strong>` : ''}</dd>
 <dt>Date Assign</dt><dd>${escape(start)}</dd></dl></article>`;
   }).join('\n');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Leave handover ${start} to ${end}</title>
-<style>body{margin:0;color:#172332;background:#f1f5f9;font:14px/1.5 system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:24px}header,.case{background:white;border:1px solid #c4ceda;border-radius:8px;padding:20px;margin:16px 0}h1{margin:0;font-size:24px}h2{margin:0 0 16px;font-size:18px}dl{display:grid;grid-template-columns:170px 1fr;gap:10px 18px}dt{font-weight:700}dd{margin:0;overflow-wrap:anywhere}dd p:first-child{margin-top:0}ol{padding-left:22px}.warning{color:#9b3329;font-weight:700}a{color:#155bb6}small{color:#566376}@media(max-width:650px){dl{display:block}dt{margin-top:12px}}@media print{body{background:white}main{padding:0}header,.case{break-inside:avoid;border:0;border-bottom:1px solid #c4ceda;border-radius:0}}</style></head><body><main>
+<style>body{margin:0;color:#172332;background:#f1f5f9;font:14px/1.5 system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:24px}header,.case{background:white;border:1px solid #c4ceda;border-radius:8px;padding:20px;margin:16px 0}h1{margin:0;font-size:24px}h2{margin:0 0 16px;font-size:18px}dl{display:grid;grid-template-columns:170px 1fr;gap:10px 18px}dt{font-weight:700}dd{margin:0;overflow-wrap:anywhere}dd p{margin:0 0 4px}dd p:last-child{margin-bottom:0}.warning{color:#9b3329;font-weight:700}a{color:#155bb6}small{color:#566376}@media(max-width:650px){dl{display:block}dt{margin-top:12px}}@media print{body{background:white}main{padding:0}header,.case{break-inside:avoid;border:0;border-bottom:1px solid #c4ceda;border-radius:0}}</style></head><body><main>
 <header><h1>Leave handover</h1><p>Leave: <strong>${escape(start)} → ${escape(end)}</strong> (inclusive)<br>Assigned from: <strong>${escape(start)}</strong><br>Support profile ID: ${escape(profileId)}<br>Generated: ${escape(now.toISOString())}<br>Cases requiring action during leave: <strong>${pending.length}</strong></p>
 <p>Only calculated actions due during leave are listed. Check each live thread before acting; new customer replies can change the next step or deadline. This report does not confirm CI closure.</p></header>
 ${cards || '<section class="case"><p>No saved cases have a calculated action due during this leave period.</p></section>'}

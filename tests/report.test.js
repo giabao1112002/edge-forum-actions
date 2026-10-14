@@ -20,16 +20,35 @@ const thread = { id: '6027209', url, title: 'Database connection error', entries
 ] };
 const result = { action: 'Send last quality response', due: '2026-10-15' };
 
-test('handover detail identifies the owner, customer need and their own conversation', () => {
+test('handover detail identifies the owner and briefly summarizes their conversation', () => {
   const item = buildHandoverCase(thread, result, profileId, scopeThread);
   assert.equal(item.id, '6027209');
   assert.equal(item.ownerName, 'Brian Pham');
   assert.equal(item.status, 'Strike posted; final response pending');
   assert.match(item.nextStep, /final quality response by 2026-10-15/);
   assert.match(item.detail.customerNeed, /database connection fails/);
-  assert.equal(item.detail.exchanges.length, 3);
-  assert.deepEqual(item.detail.exchanges.map((entry) => entry.role), ['Owner', 'Customer', 'Owner']);
+  assert.match(item.detail.ownerUpdate, /installed driver version/);
+  assert.match(item.detail.customerUpdate, /connection string was correct/);
+  assert.equal(Object.keys(item.detail).length, 4);
   assert.doesNotMatch(JSON.stringify(item.detail), /another answer/);
+});
+
+test('handover summary skips routine follow-ups and long conversation history', () => {
+  const longThread = structuredClone(thread);
+  longThread.title = 'VBA progress bar issue';
+  longThread.entries[0].content = 'TarunVBA2026PB20';
+  longThread.entries[1].content = 'Hi @Tarun Kumar, Thank you for sharing the code sample. After reviewing the VBA code, the UserForm progress bar logic appears correct. Please check the installed Office version and run the sample again.';
+  longThread.entries = longThread.entries.filter((entry) => entry.id !== 'comment-2');
+  longThread.entries.push({ id: 'comment-3', type: 'comment', parentAnswerId: 'answer-1',
+    authorId: profileId, timestamp: '2026-10-14T09:00:00Z',
+    content: 'Hi @Tarun Kumar, I haven’t heard back from you. Just wanted to check whether you saw my previous response. Feel free to reach out.' });
+  const item = buildHandoverCase(longThread, result, profileId, scopeThread);
+  const html = buildLeaveReport([item], profileId, '2026-10-15', '2026-10-15', now);
+  assert.equal(item.detail.customerNeed, 'VBA progress bar issue');
+  assert.match(item.detail.ownerUpdate, /^After reviewing the VBA code/);
+  assert.ok(item.detail.ownerUpdate.length <= 163);
+  assert.doesNotMatch(html, /haven.t heard back|Just wanted to check|<ol>/i);
+  assert.match(html, /Customer request:|Owner response:/);
 });
 
 test('handover status and next step describe customer waiting, strikes and follow-up', () => {
@@ -69,6 +88,8 @@ test('report escapes thread content, refuses unsafe links and marks unreadable t
   item.title = '<script>alert(1)</script>';
   item.url = 'javascript:alert(1)';
   item.detail.customerNeed = '<img src=x onerror=alert(1)>';
+  item.detail.ownerUpdate = '<script>alert(2)</script>';
+  item.detail.customerUpdate = '<img src=x onerror=alert(3)>';
   item.sourceError = 'Network unavailable';
   const html = buildLeaveReport([item], profileId, '2026-10-15', '2026-10-15', now);
   assert.doesNotMatch(html, /<script|<img|href="javascript:/);
