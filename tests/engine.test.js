@@ -246,6 +246,26 @@ test('answer accepted from someone else does not claim Brian completed the case'
   assert.equal(result.action, 'Review needed');
   assert.equal(result.due, null);
 });
+test('Developer Community proposed solutions do not imply acceptance and closed status stops deadlines', () => {
+  const proposed = { ...thread([response]), site: 'devcommunity', acceptedAnswerId: null, communityStatus: 'Active' };
+  assert.equal(planAction(proposed, settings(), today).action, 'Post first strike comment');
+  const closed = planAction({ ...proposed, communityStatus: 'Closed - Fixed' }, settings(), today);
+  assert.equal(closed.tone, 'completed');
+  assert.equal(closed.due, null);
+  assert.match(closed.reason, /Closed - Fixed/);
+  assert.doesNotMatch(closed.action, /accepted/i);
+});
+test('Developer Community first staff comment starts the same strike schedule as a first answer', () => {
+  const comment = entry('community-reply', 'comment', 'staff', '2026-09-25T12:00:00Z');
+  const community = { ...thread([comment]), site: 'devcommunity', communityStatus: 'Active' };
+  assert.equal(scopeThread(community, 'staff').entries[1].type, 'answer');
+  const result = planAction(community, settings(), today);
+  assert.equal(result.action, 'Post first strike comment');
+  assert.equal(result.due, '2026-09-30');
+  const customerReply = entry('community-customer', 'comment', 'customer', '2026-09-29T12:00:00Z');
+  const followup = planAction({ ...community, entries: [...community.entries, customerReply] }, settings(), today);
+  assert.equal(followup.action, 'Follow up with customer');
+});
 test('customer reply beneath someone else’s answer does not reset Brian’s timeline', () => {
   const brian = '696f09c3-51ea-4371-99ea-14d4c83bead8';
   const customer = '9b99766f-46a0-4c63-8807-84feb1ba73b1';

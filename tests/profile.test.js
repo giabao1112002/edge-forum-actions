@@ -25,6 +25,13 @@ test('supports Developer Community profile links without colliding with Learn ID
   assert.equal(profileStorageKey(profileId, 'learn', 'cases'), `cases-${profileId}`);
 });
 
+test('Developer Community profile field accepts a numeric user ID directly', async () => {
+  const details = await resolveSupportProfileDetails('1730167', async () => {
+    throw new Error('A numeric profile ID should not require a network lookup.');
+  }, 'devcommunity');
+  assert.deepEqual(details, { id: '1730167', username: undefined });
+});
+
 test('saved cases carry their source site so Learn and Dev Community stay distinguishable', () => {
   const summary = caseSummary({ id: '99', url: 'https://developercommunity.visualstudio.com/t/123456', title: 'DevCom case',
     entries: [{ id: 'answer-1', type: 'answer', authorId: 'support', timestamp: '2026-10-01T10:00:00Z' }] },

@@ -66,9 +66,9 @@ function extractDeveloperCommunityThread(data, pageUrl) {
   collect(data.children);
   for (const post of posts) add(post, post.type === 3 ? 'answer' : 'comment');
   entries.sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
-  const solution = posts.find((post) => post.type === 3 && !post.isDeleted);
+  const communityStatus = data.tags?.find((tag) => tag.category === 1 && typeof tag.value === 'string')?.value || '';
   return { id: String(data.id), url: `${url.origin}${url.pathname}`, title: String(data.title || 'Developer Community thread'),
-    entries, acceptedAnswerId: solution ? String(solution.id) : null, hasMorePages: false, site: 'devcommunity' };
+    entries, acceptedAnswerId: null, communityStatus, hasMorePages: false, site: 'devcommunity' };
 }
 
 if (typeof module !== 'undefined') module.exports = { extractForumThread, extractDeveloperCommunityThread };

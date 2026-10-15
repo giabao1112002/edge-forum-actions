@@ -707,6 +707,46 @@ test('leave report downloads only the current profile cases and validates dates'
   assert.match(get('report-status').textContent, /valid leave date range/);
 });
 
+test('leave report uses each site’s profile when Learn and Developer Community cases are combined', async () => {
+  const app = await racePopup();
+  const state = vm.runInContext('state', app.context);
+  const communityId = '1730167';
+  const communityUrl = 'https://developercommunity.visualstudio.com/t/sample/5678';
+  state.supportProfiles = { learn: { id: app.profileId }, devcommunity: { id: communityId } };
+  state.cases = [
+    { id: '1234', site: 'learn', url: app.thread('1234').url, title: 'Learn case',
+      action: 'Post first strike comment', due: '2026-10-15', tone: 'upcoming' },
+    { id: '5678', site: 'devcommunity', url: communityUrl, title: 'Community case',
+      action: 'Post first strike comment', due: '2026-10-15', tone: 'upcoming' }
+  ];
+  app.context.renderCases();
+  app.context.readThread = async (url) => ({ id: url === communityUrl ? '5678' : '1234', url,
+    site: url === communityUrl ? 'devcommunity' : 'learn', title: 'Handover case', entries: [
+      { id: 'question', type: 'question', authorId: 'customer', timestamp: '2026-10-11T12:00:00Z', content: 'Help needed' },
+      { id: 'response', type: url === communityUrl ? 'comment' : 'answer',
+        authorId: url === communityUrl ? communityId : app.profileId,
+        author: url === communityUrl ? 'Dev engineer' : 'Learn engineer',
+        timestamp: '2026-10-12T12:00:00Z', content: 'Please check the connection.' }
+    ] });
+  const get = app.document.getElementById;
+  get('report-start').value = '2026-10-15';
+  get('report-end').value = '2026-10-15';
+  app.document.body = new Element();
+  const originalCreate = app.document.createElement;
+  let downloaded;
+  app.document.createElement = (tag) => {
+    const element = originalCreate(tag);
+    element.click = () => { downloaded = decodeURIComponent(element.href.split(',')[1]); };
+    element.remove = () => {};
+    return element;
+  };
+  await get('report-form').handlers.submit({ preventDefault() {} });
+  assert.match(downloaded, /Owner name<\/dt><dd>Learn engineer/);
+  assert.match(downloaded, /Owner name<\/dt><dd>Dev engineer/);
+  assert.match(downloaded, /href="https:\/\/developercommunity\.visualstudio\.com\/t\/sample\/5678"/);
+  assert.match(downloaded, /Support profile\(s\): Learn:/);
+});
+
 test('report export is blocked while refreshing cases', async () => {
   const app = await racePopup();
   const get = app.document.getElementById;

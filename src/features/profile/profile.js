@@ -36,6 +36,7 @@ function supportProfileInput(value, siteHint = 'learn') {
   if (!input) throw new Error('Paste your Microsoft Learn or Developer Community profile link or its user ID.');
   const site = normalizeSupportSite(siteHint);
   if (supportProfileIdPattern.test(input)) return { site, id: input.toLowerCase() };
+  if (site === 'devcommunity' && /^\d+$/.test(input)) return { site, id: input };
   let url;
   try { url = new URL(input); } catch { throw new Error('Paste your Microsoft Learn or Developer Community profile link or its user ID.'); }
   if (url.protocol !== 'https:' || url.port || url.username || url.password) {

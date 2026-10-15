@@ -83,6 +83,16 @@ test('report includes only pending actions due during leave with the seven hando
   assert.deepEqual([due, later, resolved], before);
 });
 
+test('Developer Community handover keeps its source and links to the matching thread', () => {
+  const community = { ...thread, id: '11163679', site: 'devcommunity',
+    url: 'https://developercommunity.visualstudio.com/t/sample/11163679' };
+  const item = buildHandoverCase(community, result, profileId, scopeThread);
+  const html = buildLeaveReport([item], profileId, '2026-10-15', '2026-10-15', now);
+  assert.match(html, /Source<\/dt><dd>Developer Community/);
+  assert.match(html, /href="https:\/\/developercommunity\.visualstudio\.com\/t\/sample\/11163679"/);
+  assert.doesNotMatch(html, /Link unavailable/);
+});
+
 test('report escapes thread content, refuses unsafe links and marks unreadable threads', () => {
   const item = buildHandoverCase(thread, result, profileId, scopeThread);
   item.title = '<script>alert(1)</script>';

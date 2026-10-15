@@ -90,6 +90,7 @@ test('maps Developer Community rootPost data into question, comment, and solutio
     id: 11163679,
     title: 'Sample Community issue',
     type: 0,
+    tags: [{ category: 1, value: 'Closed - Fixed' }],
     author: { id: 1069155, name: 'Customer' },
     text: 'Question body',
     createdDate: '2026-10-09T14:25:52.9133333Z',
@@ -108,5 +109,6 @@ test('maps Developer Community rootPost data into question, comment, and solutio
   assert.deepEqual(result.entries.map((entry) => entry.type), ['question', 'comment', 'answer']);
   assert.equal(result.entries[1].authorId, '1730167');
   assert.equal(result.entries[2].timestamp, '2026-10-12T10:29:56.936Z');
-  assert.equal(result.acceptedAnswerId, '11164630');
+  assert.equal(result.acceptedAnswerId, null);
+  assert.equal(result.communityStatus, 'Closed - Fixed');
 });

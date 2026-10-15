@@ -11,12 +11,15 @@ function addBusinessDays(timestamp, count) {
 function scopeThread(thread, supportAuthorId) {
   const question = thread.entries.find((entry) => entry.type === 'question');
   const authorId = question?.authorId;
+  const firstCommunityResponse = thread.site === 'devcommunity' ? thread.entries.find((entry) =>
+    entry.authorId === supportAuthorId && (entry.type === 'comment' || entry.type === 'answer'))?.id : null;
   const supportAnswers = new Set(thread.entries.filter((entry) => entry.type === 'answer' && entry.authorId === supportAuthorId)
     .map((entry) => entry.id));
   const isRelevant = (entry) => entry.type === 'question' ||
     (!entry.parentAnswerId || supportAnswers.has(entry.parentAnswerId)) &&
     entry.authorId && (entry.authorId === authorId || entry.authorId === supportAuthorId);
-  const entries = thread.entries.filter(isRelevant);
+  const entries = thread.entries.filter(isRelevant).map((entry) =>
+    entry.id === firstCommunityResponse && entry.type === 'comment' ? { ...entry, type: 'answer' } : entry);
   return { ...thread, entries, excludedCount: thread.entries.length - entries.length,
     hasUnidentifiedAuthors: thread.entries.some((entry) => entry.type !== 'question' && !entry.authorId &&
       (!entry.parentAnswerId || supportAnswers.has(entry.parentAnswerId))) };
@@ -55,6 +58,9 @@ function inferPostAction(entry, entries, customerAuthorId, supportAuthorId, over
 function planAction(thread, settings, now = new Date()) {
   const review = (reason) => ({ action: 'Review needed', reason, due: null, tone: 'neutral' });
   if (!settings.supportAuthorId) return review('Set your support profile to calculate an action.');
+  if (thread.site === 'devcommunity' && /^Closed\b/i.test(thread.communityStatus || ''))
+    return { action: 'Developer Community thread closed — verify CI closure', due: null, tone: 'completed',
+      reason: `Public status: ${thread.communityStatus}. Confirm CI closure separately.` };
   const question = thread.entries.find((entry) => entry.type === 'question');
   if (thread.acceptedAnswerId) {
     const acceptedAnswer = thread.entries.find((entry) => entry.id === thread.acceptedAnswerId);

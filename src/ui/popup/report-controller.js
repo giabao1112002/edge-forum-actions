@@ -36,7 +36,11 @@ function createReportController({ document, chrome, state, buildLeaveReport, bui
       exporting = true;
       state.exportingReport = true;
       button.disabled = true;
-      const ownerFallback = await profileDisplayName(supportAuthorId);
+      const profiles = { ...(state.supportProfiles || {}) };
+      if (!profiles.learn && !profiles.devcommunity) profiles.learn = { id: supportAuthorId };
+      const ownerFallback = profiles.learn?.id ? await profileDisplayName(profiles.learn.id) : '';
+      const profileSummary = ['learn', 'devcommunity'].filter((site) => profiles[site]?.id)
+        .map((site) => `${site === 'learn' ? 'Learn' : 'Developer Community'}: ${profiles[site].id}`).join(' · ');
       const records = new Array(cases.length);
       let next = 0;
       let finished = 0;
@@ -44,16 +48,20 @@ function createReportController({ document, chrome, state, buildLeaveReport, bui
         while (next < cases.length) {
           const index = next++;
           const saved = cases[index];
+          const site = saved.site === 'devcommunity' ? 'devcommunity' : 'learn';
+          const profileId = profiles[site]?.id;
           if (state.supportAuthorId !== supportAuthorId || state.profileLoading)
             throw new Error('Support profile changed during export. Start the report again.');
           try {
+            if (!profileId) throw new Error('The support profile for this site is not set.');
             const thread = await readThread(saved.url);
             if (thread.id !== saved.id) throw new Error('The link redirected to a different Q&A case.');
-            const settings = await loadSettings(thread.id, supportAuthorId);
+            const settings = await loadSettings(thread.id, profileId, site);
             const result = planAction(thread, settings);
-            records[index] = buildHandoverCase(thread, result, supportAuthorId, scopeThread, ownerFallback);
+            records[index] = buildHandoverCase(thread, result, profileId, scopeThread,
+              site === 'learn' ? ownerFallback : '');
           } catch (error) {
-            records[index] = { ...saved, ownerName: ownerFallback || 'Name unavailable',
+            records[index] = { ...saved, ownerName: site === 'learn' ? ownerFallback || 'Name unavailable' : 'Name unavailable',
               status: 'Last known action; thread could not be verified',
               nextStep: `${saved.action} by ${saved.due || 'the calculated deadline'}; verify the live thread first.`,
               sourceError: error.message };
@@ -65,7 +73,7 @@ function createReportController({ document, chrome, state, buildLeaveReport, bui
       await Promise.all(Array.from({ length: Math.min(3, cases.length) }, () => worker()));
       if (state.supportAuthorId !== supportAuthorId || state.profileLoading)
         throw new Error('Support profile changed during export. Start the report again.');
-      const html = buildLeaveReport(records, supportAuthorId, start, end);
+      const html = buildLeaveReport(records, profileSummary || supportAuthorId, start, end);
       const download = document.createElement('a');
       download.href = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
       download.download = `leave-report-${start}-to-${end}.html`;
