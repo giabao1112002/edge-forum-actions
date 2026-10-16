@@ -40,7 +40,7 @@ function teamsThreadLink(thread, entryId) {
     const communityThread = url.hostname === 'developercommunity.visualstudio.com' &&
       /^\/t\/(?:[^/]+\/)?\d+(?:\/|$)/i.test(url.pathname);
     if (url.protocol === 'https:' && (learnThread || communityThread))
-      return `${url.origin}${url.pathname}#${encodeURIComponent(entryId)}`;
+      return `${url.origin}${url.pathname}${entryId ? `#${encodeURIComponent(entryId)}` : ''}`;
   } catch {}
   return '';
 }
@@ -78,8 +78,10 @@ function createTeamsNotifier(storage, request, scope) {
       const config = { enabled: !!settings.enabled, webhook };
       const reset = !old || old.webhook !== webhook || old.enabled !== config.enabled;
       await storage.set({ [key]: config, [profileStorageKey(profileId, site, 'teams-status')]: { message: config.enabled
-        ? 'Enabled. The first check establishes a baseline; old replies and accepted answers will not be sent.' : 'Teams is off.' },
-      ...(reset ? { [profileStorageKey(profileId, site, 'teams-seen')]: {}, [profileStorageKey(profileId, site, 'teams-accepted')]: {} } : {}) });
+        ? 'Enabled. The first check establishes a baseline; old replies, accepted answers, and closed threads will not be sent.' : 'Teams is off.' },
+      ...(reset ? { [profileStorageKey(profileId, site, 'teams-seen')]: {},
+        [profileStorageKey(profileId, site, 'teams-accepted')]: {},
+        [profileStorageKey(profileId, site, 'teams-community-status')]: {} } : {}) });
       return { ok: true };
     }),
     test: (profileId) => enqueue(async () => {
@@ -102,14 +104,48 @@ function createTeamsNotifier(storage, request, scope) {
       const configKey = profileStorageKey(profileId, site, 'teams');
       const seenKey = profileStorageKey(profileId, site, 'teams-seen');
       const acceptedKey = profileStorageKey(profileId, site, 'teams-accepted');
+      const communityStatusKey = profileStorageKey(profileId, site, 'teams-community-status');
       const statusKey = profileStorageKey(profileId, site, 'teams-status');
       const casesKey = profileStorageKey(profileId, site, 'cases');
-      const stored = await storage.get(['supportAuthorId', 'supportSite', 'supportProfiles', configKey, seenKey, acceptedKey, statusKey, casesKey]);
+      const stored = await storage.get(['supportAuthorId', 'supportSite', 'supportProfiles', configKey, seenKey,
+        acceptedKey, communityStatusKey, statusKey, casesKey]);
       const config = stored[configKey];
       const configuredId = stored.supportProfiles?.[site]?.id ||
         (normalizeSupportSite(stored.supportSite || 'learn') === site ? stored.supportAuthorId : '');
       if (!config?.enabled || configuredId !== profileId ||
           !(stored[casesKey] || []).some((item) => item.id === thread.id)) return;
+      if (site === 'devcommunity' && thread.site === 'devcommunity' && thread.communityStatus) {
+        const communityStatus = String(thread.communityStatus || '').trim();
+        const history = stored[communityStatusKey] || {};
+        if (!Object.hasOwn(history, thread.id)) {
+          history[thread.id] = communityStatus;
+          await storage.set({ [communityStatusKey]: history });
+        } else if (history[thread.id] !== communityStatus) {
+          if (!/^Closed\s*-\s*Fixed$/i.test(communityStatus)) {
+            history[thread.id] = communityStatus;
+            await storage.set({ [communityStatusKey]: history });
+          } else if (!(stored[statusKey]?.retryAt > Date.now())) {
+            const current = await storage.get(['supportAuthorId', 'supportSite', 'supportProfiles', configKey, casesKey]);
+            const currentId = current.supportProfiles?.[site]?.id ||
+              (normalizeSupportSite(current.supportSite || 'learn') === site ? current.supportAuthorId : '');
+            const savedCase = (current[casesKey] || []).find((item) => item.id === thread.id);
+            if (currentId !== profileId || !current[configKey]?.enabled ||
+                current[configKey].webhook !== config.webhook || !savedCase || savedCase.error) return;
+            try {
+              await send(config.webhook, teamsCard(`Developer Community thread Closed - Fixed · Case ${thread.id}`,
+                ['The public thread status changed to Closed - Fixed. Verify CI closure separately.'],
+                teamsThreadLink(thread, '')));
+              history[thread.id] = communityStatus;
+              await storage.set({ [communityStatusKey]: history, [statusKey]: {
+                message: 'Workflow accepted the Closed - Fixed notification. Check the chat and run history.',
+                sentAt: new Date().toISOString() } });
+            } catch (error) {
+              await storage.set({ [statusKey]: { message: error.message, retryAt: error.retryAt || null } });
+              return;
+            }
+          }
+        }
+      }
       const acceptedAnswer = thread.entries.find((entry) => entry.type === 'answer' &&
         entry.id === thread.acceptedAnswerId && entry.authorId === profileId);
       const acceptedHistory = stored[acceptedKey] || {};
