@@ -8,6 +8,14 @@ function addBusinessDays(timestamp, count) {
   return date;
 }
 
+function sameCustomerName(left, right) {
+  const words = (value) => new Set(String(value || '').normalize('NFKD').toLowerCase()
+    .match(/[\p{L}\p{N}]{5,}/gu)?.filter((word) => !['customer', 'unknown', 'microsoft', 'support',
+      'anonymous', 'question', 'author', 'profile'].includes(word)) || []);
+  const original = words(left);
+  return [...words(right)].some((word) => original.has(word));
+}
+
 function scopeThread(thread, supportAuthorId) {
   const question = thread.entries.find((entry) => entry.type === 'question');
   const authorId = question?.authorId;
@@ -15,11 +23,15 @@ function scopeThread(thread, supportAuthorId) {
     entry.authorId === supportAuthorId && (entry.type === 'comment' || entry.type === 'answer'))?.id : null;
   const supportAnswers = new Set(thread.entries.filter((entry) => entry.type === 'answer' && entry.authorId === supportAuthorId)
     .map((entry) => entry.id));
+  const replyToOwnAnswer = (entry) => entry.type === 'comment' && supportAnswers.has(entry.parentAnswerId) &&
+    entry.authorId && entry.authorId !== supportAuthorId && sameCustomerName(question?.author, entry.author);
   const isRelevant = (entry) => entry.type === 'question' ||
     (!entry.parentAnswerId || supportAnswers.has(entry.parentAnswerId)) &&
-    entry.authorId && (entry.authorId === authorId || entry.authorId === supportAuthorId);
+    entry.authorId && (entry.authorId === authorId || entry.authorId === supportAuthorId || replyToOwnAnswer(entry));
   const entries = thread.entries.filter(isRelevant).map((entry) =>
-    entry.id === firstCommunityResponse && entry.type === 'comment' ? { ...entry, type: 'answer' } : entry);
+    entry.id === firstCommunityResponse && entry.type === 'comment' ? { ...entry, type: 'answer' }
+      : { ...entry, customerReply: entry.type === 'comment' && entry.authorId !== supportAuthorId &&
+        (entry.authorId === authorId || replyToOwnAnswer(entry)) });
   return { ...thread, entries, excludedCount: thread.entries.length - entries.length,
     hasUnidentifiedAuthors: thread.entries.some((entry) => entry.type !== 'question' && !entry.authorId &&
       (!entry.parentAnswerId || supportAnswers.has(entry.parentAnswerId))) };
@@ -29,7 +41,7 @@ function inferProcessStage(entries, customerAuthorId, supportAuthorId) {
   const firstAnswer = entries.find((entry) => entry.type === 'answer' && entry.authorId === supportAuthorId);
   if (!firstAnswer) return 'pre-response';
   const afterAnswer = entries.filter((entry) => Date.parse(entry.timestamp) > Date.parse(firstAnswer.timestamp));
-  const customerReplies = afterAnswer.filter((entry) => entry.authorId === customerAuthorId);
+  const customerReplies = afterAnswer.filter((entry) => entry.customerReply || entry.authorId === customerAuthorId);
   if (!customerReplies.length) return 'first';
   const latestCustomerReply = customerReplies[customerReplies.length - 1];
   const replied = afterAnswer.some((entry) => entry.authorId === supportAuthorId &&
@@ -40,7 +52,8 @@ function inferProcessStage(entries, customerAuthorId, supportAuthorId) {
 function inferPostAction(entry, entries, customerAuthorId, supportAuthorId, overrides = {}) {
   if (entry.type === 'answer') return 'response';
   const earlier = entries.filter((item) => Date.parse(item.timestamp) < Date.parse(entry.timestamp));
-  const latestCustomer = [...earlier].reverse().find((item) => item.authorId === customerAuthorId && item.type !== 'question');
+  const latestCustomer = [...earlier].reverse().find((item) => item.type !== 'question' &&
+    (item.customerReply || item.authorId === customerAuthorId));
   const latestSupport = [...earlier].reverse().find((item) => item.authorId === supportAuthorId);
   if (latestCustomer && (!latestSupport || Date.parse(latestCustomer.timestamp) > Date.parse(latestSupport.timestamp)))
     return 'response';
@@ -84,7 +97,7 @@ function planAction(thread, settings, now = new Date()) {
     return review('A comment after your first answer has no author ID; verify whether the customer replied.');
   const events = scoped.entries.filter((entry) => entry.id === firstAnswer.id ||
     entry.type !== 'question' && Date.parse(entry.timestamp) > Date.parse(firstAnswer.timestamp)).map((entry) => ({ ...entry,
-    role: entry.authorId === question.authorId ? 'customer' : 'staff',
+    role: entry.customerReply || entry.authorId === question.authorId ? 'customer' : 'staff',
     action: settings.actions?.[entry.id] || inferPostAction(entry, scoped.entries, question.authorId, settings.supportAuthorId, settings.actions) }));
   const relevant = events.filter((event) => event.role === 'customer' || event.role === 'staff' && event.action !== 'ignore');
   const customer = [...relevant].reverse().find((event) => event.role === 'customer');

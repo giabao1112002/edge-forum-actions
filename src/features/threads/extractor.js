@@ -21,8 +21,9 @@ function extractForumThread(page = document, pageUrl = location.href) {
   if (question) add(question, 'question');
   else {
     const timestamp = page.querySelector('meta[name="createdAt"]')?.content;
+    const questionAuthor = page.querySelector('#question-details [data-test-id="content-author"] .profile-url')?.textContent?.trim();
     if (timestamp && Number.isFinite(Date.parse(timestamp))) entries.push({ id: `question-${questionId}`, type: 'question',
-      authorId: page.querySelector('meta[name="authorId"]')?.content || '', author: 'Question author',
+      authorId: page.querySelector('meta[name="authorId"]')?.content || '', author: questionAuthor || 'Question author',
       timestamp: new Date(timestamp).toISOString(), content: '', excerpt: '' });
   }
   page.querySelectorAll('[id^="answer-"], li[id^="comment-"]').forEach((node) => {

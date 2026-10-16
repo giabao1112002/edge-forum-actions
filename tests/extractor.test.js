@@ -17,6 +17,8 @@ test('extracts question metadata and answer/comment activity in chronological or
     querySelector: (selector) => {
       if (selector.includes('createdAt')) return { content: '2026-09-25T12:00:00Z' };
       if (selector.includes('authorId')) return { content: 'customer' };
+      if (selector === '#question-details [data-test-id="content-author"] .profile-url')
+        return { textContent: '  Customer Name  ' };
       if (selector.includes('pageCount')) return { content: '1' };
       if (selector === 'h1') return { textContent: 'Sample thread' };
       return null;
@@ -26,6 +28,7 @@ test('extracts question metadata and answer/comment activity in chronological or
   const result = extractForumThread(page, 'https://learn.microsoft.com/en-us/answers/questions/1234/sample');
   assert.deepEqual(result.entries.map((entry) => entry.id), ['question-1234', 'answer-1', 'comment-2']);
   assert.equal(result.entries[2].authorId, 'customer');
+  assert.equal(result.entries[0].author, 'Customer Name');
   assert.equal(result.entries[1].excerpt, 'answer message');
   assert.equal(result.entries[1].content, 'answer message');
   assert.equal(result.entries[2].parentAnswerId, null);

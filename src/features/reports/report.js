@@ -15,7 +15,7 @@ function buildHandoverCase(thread, result, profileId, scope, ownerFallback = '')
     .test(entry.content || entry.excerpt || '');
   const ownerUpdate = [...ownerEntries].reverse().find((entry) => !isRoutineFollowUp(entry)) || ownerEntries[0];
   const customerUpdate = [...scoped.entries].reverse().find((entry) => entry.type !== 'question' &&
-    entry.authorId === question?.authorId);
+    (entry.customerReply || entry.authorId === question?.authorId));
   const questionText = question?.content || question?.excerpt || '';
   const customerNeed = questionText.length >= 25 || questionText.includes(' ') ? questionText : thread.title;
   const action = result.action;

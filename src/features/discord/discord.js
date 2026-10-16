@@ -95,7 +95,8 @@ function createDiscordNotifier(storage, request, scope) {
       const customer = scoped.entries.find((item) => item.type === 'question')?.authorId;
       const firstAnswer = scoped.entries.find((item) => item.type === 'answer' && item.authorId === profileId);
       if (!customer || !firstAnswer || scoped.hasUnidentifiedAuthors) return;
-      const replies = scoped.entries.filter((item) => item.type !== 'question' && item.authorId === customer &&
+      const replies = scoped.entries.filter((item) => item.type !== 'question' &&
+        (item.customerReply || item.authorId === customer) &&
         Date.parse(item.timestamp) > Date.parse(firstAnswer.timestamp));
       const history = stored[seenKey] || {};
       if (!Object.hasOwn(history, thread.id)) {
