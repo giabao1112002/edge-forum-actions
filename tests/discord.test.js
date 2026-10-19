@@ -12,8 +12,8 @@ const base = { id: '1', url: 'https://learn.microsoft.com/en-us/answers/question
 const reply = (id, extra = {}) => ({ id, type: 'comment', authorId: 'cx', parentAnswerId: 'answer-1',
   timestamp: '2026-10-02T10:00:00Z', excerpt: '@everyone private reply', ...extra });
 const summary = { id: '1', action: 'Follow up with customer', due: '2026-10-05' };
-function app() {
-  const saved = { supportAuthorId: profileId, 'cases-support': [summary] };
+function app(initial = {}) {
+  const saved = { supportAuthorId: profileId, 'cases-support': [summary], ...initial };
   const requests = [];
   let respond = async () => ({ ok: true, status: 200 });
   const storage = { get: async (keys) => structuredClone(Object.fromEntries((Array.isArray(keys) ? keys : [keys])
@@ -111,4 +111,19 @@ test('test sends only after an explicit request and reconnect establishes a new 
   assert.equal(a.requests.length, 1);
   await a.notifier.configure(profileId, { enabled: false, webhook: '' });
   assert.equal(a.saved['discord-support'].webhook, '');
+});
+
+test('Developer Community reply alerts stay site-scoped after Learn becomes active', async () => {
+  const a = app({ supportSite: 'devcommunity', supportProfiles: { learn: { id: 'learn-user' }, devcommunity: { id: profileId } },
+    'cases-devcommunity-support': [summary] });
+  await a.notifier.configure(profileId, { enabled: true, webhook });
+  const thread = { ...base, url: 'https://developercommunity.visualstudio.com/t/sample/1' };
+  await a.notifier.observe(profileId, thread, summary, 'devcommunity');
+  a.saved.supportSite = 'learn';
+  const updated = { ...thread, entries: [...thread.entries, reply('community-reply')] };
+  await a.notifier.observe(profileId, updated, summary, 'devcommunity');
+  assert.equal(a.requests.length, 1);
+  assert.match(a.requests[0].payload.embeds[0].url, /^https:\/\/developercommunity\.visualstudio\.com\/t\/sample\/1#community-reply$/);
+  assert.deepEqual(a.saved['discord-seen-devcommunity-support']['1'], ['community-reply']);
+  assert.equal(a.saved['discord-seen-support'], undefined);
 });
