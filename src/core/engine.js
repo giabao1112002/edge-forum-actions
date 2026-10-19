@@ -30,11 +30,15 @@ function scopeThread(thread, supportAuthorId) {
     entry.authorId && (entry.authorId === authorId || entry.authorId === supportAuthorId || replyToOwnAnswer(entry));
   const entries = thread.entries.filter(isRelevant).map((entry) =>
     entry.id === firstCommunityResponse && entry.type === 'comment' ? { ...entry, type: 'answer' }
-      : { ...entry, customerReply: entry.type === 'comment' && entry.authorId !== supportAuthorId &&
-        (entry.authorId === authorId || replyToOwnAnswer(entry)) });
-  return { ...thread, entries, excludedCount: thread.entries.length - entries.length,
+      : {
+        ...entry, customerReply: entry.type === 'comment' && entry.authorId !== supportAuthorId &&
+          (entry.authorId === authorId || replyToOwnAnswer(entry))
+      });
+  return {
+    ...thread, entries, excludedCount: thread.entries.length - entries.length,
     hasUnidentifiedAuthors: thread.entries.some((entry) => entry.type !== 'question' && !entry.authorId &&
-      (!entry.parentAnswerId || supportAnswers.has(entry.parentAnswerId))) };
+      (!entry.parentAnswerId || supportAnswers.has(entry.parentAnswerId)))
+  };
 }
 
 function inferProcessStage(entries, customerAuthorId, supportAuthorId) {
@@ -49,7 +53,19 @@ function inferProcessStage(entries, customerAuthorId, supportAuthorId) {
   return replied ? 'ongoing' : 'awaiting-customer';
 }
 
-function inferPostAction(entry, entries, customerAuthorId, supportAuthorId, overrides = {}) {
+function inferLearnCommentIntent(entry) {
+  const content = String(entry.content || entry.excerpt || '').replace(/[’‘]/g, "'").replace(/\s+/g, ' ').toLowerCase();
+  if (!content.trim()) return null;
+  const closing = /\b(?:i )?hope (?:the |my )?(?:information|answer|response|guidance).{0,70}\b(?:helpful|useful)\b/.test(content) &&
+    /\b(?:feel free to reach out|happy to help|thank you for your time)\b/.test(content);
+  if (closing) return 'last';
+  const investigation = /\b(?:please|could you(?: please)?) (?:try|run|check|share|provide|collect|verify|confirm|test)\b|\b(?:i reviewed|i recommend|i would recommend|based on (?:the|your)|evidence suggests|to (?:help )?(?:investigate|troubleshoot))\b/.test(content);
+  if (investigation) return 'response';
+  const reminder = /\b(?:haven't|have not) heard (?:back )?from you\b|\b(?:haven't|have not) heard back\b|\b(?:just )?wanted to check (?:whether|if) you (?:had|have) a chance\b|\b(?:checking in|following up on my previous response|follow up on my previous response)\b/.test(content);
+  return reminder ? 'strike' : null;
+}
+
+function inferPostAction(entry, entries, customerAuthorId, supportAuthorId, overrides = {}, site = 'learn') {
   if (entry.type === 'answer') return 'response';
   const earlier = entries.filter((item) => Date.parse(item.timestamp) < Date.parse(entry.timestamp));
   const latestCustomer = [...earlier].reverse().find((item) => item.type !== 'question' &&
@@ -58,29 +74,44 @@ function inferPostAction(entry, entries, customerAuthorId, supportAuthorId, over
   if (latestCustomer && (!latestSupport || Date.parse(latestCustomer.timestamp) > Date.parse(latestSupport.timestamp)))
     return 'response';
   const firstAnswer = entries.find((item) => item.type === 'answer' && item.authorId === supportAuthorId);
-  const strikes = earlier.filter((item) => item.type === 'comment' && item.authorId === supportAuthorId &&
+  const lastExplicitResponse = site === 'devcommunity' ? null : [...earlier].reverse().find((item) =>
+    item.type === 'comment' && item.authorId === supportAuthorId &&
     Date.parse(item.timestamp) > Date.parse(latestCustomer?.timestamp || firstAnswer?.timestamp || 0) &&
-    (overrides[item.id] || inferPostAction(item, entries, customerAuthorId, supportAuthorId, overrides)) === 'strike');
-  if (latestCustomer) return strikes.length >= 2 ? 'last' : 'strike';
+    (overrides[item.id] === 'response' || inferLearnCommentIntent(item) === 'response'));
+  const strikes = earlier.filter((item) => item.type === 'comment' && item.authorId === supportAuthorId &&
+    Date.parse(item.timestamp) > Date.parse(lastExplicitResponse?.timestamp || latestCustomer?.timestamp || firstAnswer?.timestamp || 0) &&
+    (overrides[item.id] || inferPostAction(item, entries, customerAuthorId, supportAuthorId, overrides, site)) === 'strike');
+  const contentIntent = site === 'devcommunity' ? null : inferLearnCommentIntent(entry);
+  if (contentIntent === 'last') return strikes.length ? 'last' : 'response';
+  if (contentIntent) return contentIntent;
   const posted = new Date(entry.timestamp);
   posted.setHours(12, 0, 0, 0);
-  if (strikes.length && addBusinessDays(strikes[strikes.length - 1].timestamp, 2) <= posted) return 'last';
-  return 'strike';
+  if (strikes.length) return addBusinessDays(strikes[strikes.length - 1].timestamp, 2) <= posted ? 'last' : 'response';
+  const anchor = latestSupport && Date.parse(latestSupport.timestamp) > Date.parse(latestCustomer?.timestamp || firstAnswer?.timestamp || 0)
+    ? latestSupport : firstAnswer;
+  if (!anchor) return 'response';
+  const hasCustomerReply = !!latestCustomer && Date.parse(latestCustomer.timestamp) > Date.parse(firstAnswer?.timestamp || 0);
+  const quietDays = hasCustomerReply ? 2 : 3;
+  return addBusinessDays(anchor.timestamp, quietDays) <= posted ? 'strike' : 'response';
 }
 
 function planAction(thread, settings, now = new Date()) {
   const review = (reason) => ({ action: 'Review needed', reason, due: null, tone: 'neutral' });
   if (!settings.supportAuthorId) return review('Set your support profile to calculate an action.');
   if (thread.site === 'devcommunity' && /^Closed\b/i.test(thread.communityStatus || ''))
-    return { action: 'Developer Community thread closed — verify CI closure', due: null, tone: 'completed',
-      reason: `Public status: ${thread.communityStatus}. Confirm CI closure separately.` };
+    return {
+      action: 'Developer Community thread closed — verify CI closure', due: null, tone: 'completed',
+      reason: `Public status: ${thread.communityStatus}. Confirm CI closure separately.`
+    };
   const question = thread.entries.find((entry) => entry.type === 'question');
   if (thread.acceptedAnswerId) {
     const acceptedAnswer = thread.entries.find((entry) => entry.id === thread.acceptedAnswerId);
     if (acceptedAnswer?.authorId === settings.supportAuthorId)
-      return { action: 'Your answer was accepted', due: null, tone: 'completed',
+      return {
+        action: 'Your answer was accepted', due: null, tone: 'completed',
         reason: 'No strike due. Confirm whether the case was closed on CI separately; the public page does not verify CI status.',
-        evidence: [{ label: 'Accepted answer', entryId: acceptedAnswer.id, timestamp: acceptedAnswer.timestamp }] };
+        evidence: [{ label: 'Accepted answer', entryId: acceptedAnswer.id, timestamp: acceptedAnswer.timestamp }]
+      };
     return review('An answer was accepted, but it is not identified as yours. Check the thread and CI status.');
   }
   if (thread.hasMorePages) return review('Thread has multiple pages. Review all replies before using a deadline.');
@@ -96,9 +127,12 @@ function planAction(thread, settings, now = new Date()) {
     Date.parse(entry.timestamp) > Date.parse(firstAnswer.timestamp)))
     return review('A comment after your first answer has no author ID; verify whether the customer replied.');
   const events = scoped.entries.filter((entry) => entry.id === firstAnswer.id ||
-    entry.type !== 'question' && Date.parse(entry.timestamp) > Date.parse(firstAnswer.timestamp)).map((entry) => ({ ...entry,
-    role: entry.customerReply || entry.authorId === question.authorId ? 'customer' : 'staff',
-    action: settings.actions?.[entry.id] || inferPostAction(entry, scoped.entries, question.authorId, settings.supportAuthorId, settings.actions) }));
+    entry.type !== 'question' && Date.parse(entry.timestamp) > Date.parse(firstAnswer.timestamp)).map((entry) => ({
+      ...entry,
+      role: entry.customerReply || entry.authorId === question.authorId ? 'customer' : 'staff',
+      action: settings.actions?.[entry.id] || inferPostAction(entry, scoped.entries, question.authorId, settings.supportAuthorId,
+        settings.actions, thread.site)
+    }));
   const relevant = events.filter((event) => event.role === 'customer' || event.role === 'staff' && event.action !== 'ignore');
   const customer = [...relevant].reverse().find((event) => event.role === 'customer');
   const staff = [...relevant].reverse().find((event) => event.role === 'staff');
@@ -106,31 +140,41 @@ function planAction(thread, settings, now = new Date()) {
   if (customer && Date.parse(customer.timestamp) >= Date.parse(staff.timestamp))
     return dueAction('Follow up with customer', customer.timestamp, 1, 'Customer replied: strike count resets.', now,
       null, [sourceEvent('Customer reply', customer)], '1 business day after the customer reply');
-  const cycle = relevant.filter((event) => event.role === 'staff' && (!customer || Date.parse(event.timestamp) > Date.parse(customer.timestamp)));
+  const currentCycle = relevant.filter((event) => event.role === 'staff' &&
+    (!customer || Date.parse(event.timestamp) > Date.parse(customer.timestamp)));
+  const lastExplicitResponse = thread.site === 'devcommunity' ? null : [...currentCycle].reverse().find((event) =>
+    event.type === 'comment' && event.action === 'response' &&
+    (settings.actions?.[event.id] === 'response' || inferLearnCommentIntent(event) === 'response'));
+  const cycle = lastExplicitResponse ? currentCycle.filter((event) =>
+    Date.parse(event.timestamp) >= Date.parse(lastExplicitResponse.timestamp)) : currentCycle;
   const strikes = cycle.filter((event) => event.action === 'strike');
-  const withPostedStrikes = (result) => ({ ...result,
+  const withPostedStrikes = (result) => ({
+    ...result,
     postedStrikes: strikes.map((entry) => formatLocalDate(new Date(entry.timestamp))),
     evidence: [...(result.evidence || []), ...strikes.filter((entry) =>
       !result.evidence?.some((source) => source.entryId === entry.id))
-      .map((entry) => sourceEvent('Earlier strike posted', entry))] });
+      .map((entry) => sourceEvent('Earlier strike posted', entry))]
+  });
   const last = cycle.find((event) => event.action === 'last');
-  if (last) return withPostedStrikes({ action: 'Strike flow complete — verify CI closure', due: null, tone: 'completed',
+  if (last) return withPostedStrikes({
+    action: 'Strike flow complete — verify CI closure', due: null, tone: 'completed',
     reason: `Final follow-up posted ${new Date(last.timestamp).toLocaleDateString()}. No further strike is scheduled. The thread cannot confirm CI closure.`,
-    evidence: [sourceEvent('Final follow-up', last)] });
+    evidence: [sourceEvent('Final follow-up', last)]
+  });
   if (stage === 'first' && strikes.length > 1)
     return withPostedStrikes(review('Multiple strike comments were posted before the two-business-day final follow-up; verify their purpose.'));
-  if (strikes.length >= (stage === 'first' ? 1 : 2))
-    return withPostedStrikes(dueAction('Send last quality response', strikes[strikes.length - 1].timestamp, stage === 'first' ? 2 : 0,
+  if (strikes.length >= 1)
+    return withPostedStrikes(dueAction('Send last quality response', strikes[strikes.length - 1].timestamp, 2,
       'No customer reply after strikes.', now, null, [sourceEvent('Most recent strike', strikes[strikes.length - 1])],
-      stage === 'first' ? '2 business days after the first strike' : 'After the second strike'));
+      '2 business days after the strike'));
   const anchor = strikes.length ? strikes[strikes.length - 1] : [...cycle].reverse().find((event) => event.action === 'response');
   if (!anchor) return review('Confirm the latest support response before calculating a strike.');
-  return withPostedStrikes(dueAction(strikes.length ? 'Post second strike comment' : 'Post first strike comment', anchor.timestamp,
-    strikes.length ? 2 : stage === 'first' ? 3 : 2,
-    'No customer reply detected. Log a qualified note on CI.', now, strikes.length ? 0 : 2,
-    [sourceEvent(strikes.length ? 'First strike' : stage === 'first' ? 'Your first answer' : 'Your latest response', anchor)],
-    strikes.length ? '2 business days after the first strike' : stage === 'first'
-      ? '3 business days after your first answer' : '2 business days after your latest response'));
+  return withPostedStrikes(dueAction('Post first strike comment', anchor.timestamp,
+    stage === 'first' ? 3 : 2,
+    'No customer reply detected. Log a qualified note on CI.', now, 2,
+    [sourceEvent(anchor.id === firstAnswer.id ? 'Your first answer' : stage === 'first'
+      ? 'Your additional response' : 'Your latest response', anchor)],
+    stage === 'first' ? '3 business days after your first answer' : '2 business days after your latest response'));
 }
 
 function sourceEvent(label, entry) {
@@ -145,8 +189,10 @@ function dueAction(action, timestamp, days, reason, now, closeDaysAfterDue = nul
   const due = addBusinessDays(timestamp, days);
   const today = new Date(now); today.setHours(12, 0, 0, 0);
   const difference = Math.round((due - today) / 86400000);
-  return { action, due: formatLocalDate(due),
+  return {
+    action, due: formatLocalDate(due),
     predictedClose: closeDaysAfterDue === null ? null : formatLocalDate(addBusinessDays(due, closeDaysAfterDue)),
-    tone: difference < 0 ? 'overdue' : difference === 0 ? 'today' : 'upcoming', reason, evidence, rule };
+    tone: difference < 0 ? 'overdue' : difference === 0 ? 'today' : 'upcoming', reason, evidence, rule
+  };
 }
 if (typeof module !== 'undefined') module.exports = { planAction, addBusinessDays, scopeThread, inferProcessStage, inferPostAction };

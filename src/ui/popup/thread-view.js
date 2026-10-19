@@ -126,7 +126,8 @@ function createThreadView({ document, state, domain, saveAndRender }) {
         actionLabel.textContent = 'Your action';
         const actionInput = select([['response', 'Response / follow-up'], ['strike', 'Strike comment'],
           ['last', 'Last quality response'], ['ignore', 'Not part of this process']],
-        settings.actions[entry.id] || inferPostAction(entry, scoped.entries, question?.authorId, supportAuthorId, settings.actions),
+        settings.actions[entry.id] || inferPostAction(entry, scoped.entries, question?.authorId, supportAuthorId,
+          settings.actions, thread.site),
         (value) => {
           if (state.profileLoading || renderedThread !== state.thread || renderedSettings !== state.settings) return;
           renderedSettings.actions[entry.id] = value;

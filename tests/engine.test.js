@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { planAction, addBusinessDays, scopeThread, inferProcessStage, inferPostAction } = require('../src/core/engine');
+const { caseSummary, calendarWeek } = require('../src/features/cases/dashboard');
 
 const question = { id: 'question-1', type: 'question', authorId: 'customer', timestamp: '2026-09-25T12:00:00Z' };
 const entry = (id, type, authorId, timestamp) => ({ id, type, authorId, timestamp });
@@ -40,35 +41,36 @@ test('first-response branch requires last response two days after strike', () =>
 test('case 6016904 recognizes Brian’s October 1 comment as strike one', () => {
   const brian = '696f09c3-51ea-4371-99ea-14d4c83bead8';
   const questionAuthor = '004c3063-c797-42a6-9181-721291fcd574';
-  const activity = { entries: [
-    { id: 'question-6016904', type: 'question', authorId: questionAuthor, timestamp: '2026-09-27T19:52:01Z' },
-    { id: 'answer-12977272', type: 'answer', authorId: brian, timestamp: '2026-09-28T02:57:20Z' },
-    { id: 'comment-2834374', type: 'comment', authorId: brian, parentAnswerId: 'answer-12977272',
-      timestamp: '2026-10-01T03:08:33Z' }
-  ] };
+  const activity = {
+    entries: [
+      { id: 'question-6016904', type: 'question', authorId: questionAuthor, timestamp: '2026-09-27T19:52:01Z' },
+      { id: 'answer-12977272', type: 'answer', authorId: brian, timestamp: '2026-09-28T02:57:20Z' },
+      {
+        id: 'comment-2834374', type: 'comment', authorId: brian, parentAnswerId: 'answer-12977272',
+        timestamp: '2026-10-01T03:08:33Z'
+      }
+    ]
+  };
   const result = planAction(activity, { supportAuthorId: brian, actions: {} }, new Date('2026-10-01T12:00:00Z'));
   assert.equal(result.action, 'Send last quality response');
   assert.equal(result.due, '2026-10-05');
   assert.deepEqual(result.postedStrikes, ['2026-10-01']);
   assert.equal(result.predictedClose, null);
 });
-test('ongoing investigation requires two strikes, then last response', () => {
+test('ongoing investigation requires one strike, then last response after two business days', () => {
   const strikeOne = entry('comment-1', 'comment', 'staff', '2026-09-29T12:00:00Z');
   const strikeTwo = entry('comment-2', 'comment', 'staff', '2026-10-01T12:00:00Z');
   const customerReply = entry('comment-customer', 'comment', 'customer', '2026-09-26T12:00:00Z');
   const ongoingResponse = entry('answer-2', 'answer', 'staff', '2026-09-26T14:00:00Z');
   const one = planAction(thread([response, customerReply, ongoingResponse, strikeOne]), settings(), today);
-  assert.equal(one.action, 'Post second strike comment');
+  assert.equal(one.action, 'Send last quality response');
   assert.equal(one.due, '2026-10-01');
   assert.deepEqual(one.postedStrikes, ['2026-09-29']);
-  assert.equal(one.predictedClose, '2026-10-01');
+  assert.equal(one.predictedClose, null);
   const two = planAction(thread([response, customerReply, ongoingResponse, strikeOne, strikeTwo]), settings(), today);
-  assert.equal(two.action, 'Send last quality response');
-  assert.equal(two.due, '2026-10-01');
-  assert.deepEqual(two.postedStrikes, ['2026-09-29', '2026-10-01']);
-  assert.equal(two.predictedClose, null);
+  assert.equal(two.action, 'Strike flow complete — verify CI closure');
 });
-test('ongoing branch predicts second strike and closure before any strikes', () => {
+test('ongoing branch predicts the single strike and closure before the strike is posted', () => {
   const reply = entry('comment-customer', 'comment', 'customer', '2026-09-28T12:00:00Z');
   const followUp = entry('answer-followup', 'answer', 'staff', '2026-09-29T12:00:00Z');
   const result = planAction(thread([response, reply, followUp]), settings(), today);
@@ -123,15 +125,15 @@ test('customer reply on the close day cancels posted strikes and restarts after 
   assert.deepEqual(restarted.postedStrikes, []);
   assert.equal(restarted.predictedClose, '2026-10-09');
 });
-test('customer reply before the second strike resets the ongoing investigation count', () => {
+test('customer reply after a strike resets the cycle and schedules a new single strike', () => {
   const firstReply = entry('comment-initial-reply', 'comment', 'customer', '2026-09-26T12:00:00Z');
   const followUp = entry('comment-followup', 'comment', 'staff', '2026-09-28T12:00:00Z');
   const firstStrike = entry('comment-first-strike', 'comment', 'staff', '2026-09-30T12:00:00Z');
   const newReply = entry('comment-new-reply', 'comment', 'customer', '2026-10-02T09:00:00Z');
   newReply.parentAnswerId = response.id;
   const before = planAction(thread([response, firstReply, followUp, firstStrike]), settings(), today);
-  assert.equal(before.action, 'Post second strike comment');
-  assert.equal(before.predictedClose, '2026-10-02');
+  assert.equal(before.action, 'Send last quality response');
+  assert.equal(before.predictedClose, null);
   const pending = planAction(thread([response, firstReply, followUp, firstStrike, newReply]), settings(), today);
   assert.equal(pending.action, 'Follow up with customer');
   assert.equal(pending.postedStrikes, undefined);
@@ -177,13 +179,12 @@ test('Visual Studio product key thread has first strike September 25 and final f
   assert.equal(corrected.action, 'Send last quality response');
   assert.deepEqual(corrected.postedStrikes, ['2026-09-29']);
 });
-test('ongoing investigation ends after two strikes and a final comment', () => {
+test('ongoing investigation ends after one strike and a final comment', () => {
   const reply = entry('comment-customer', 'comment', 'customer', '2026-09-26T12:00:00Z');
   const followUp = entry('answer-followup', 'answer', 'staff', '2026-09-28T12:00:00Z');
   const firstStrike = entry('comment-first', 'comment', 'staff', '2026-09-30T12:00:00Z');
-  const secondStrike = entry('comment-second', 'comment', 'staff', '2026-10-02T12:00:00Z');
-  const final = entry('comment-final', 'comment', 'staff', '2026-10-02T13:00:00Z');
-  const entries = thread([response, reply, followUp, firstStrike, secondStrike, final]).entries;
+  const final = entry('comment-final', 'comment', 'staff', '2026-10-02T12:00:00Z');
+  const entries = thread([response, reply, followUp, firstStrike, final]).entries;
   assert.equal(inferPostAction(final, entries, 'customer', 'staff'), 'last');
   assert.equal(planAction({ entries }, settings(), today).tone, 'completed');
 });
@@ -198,8 +199,10 @@ test('the supplied case ignores Priya and includes only Brian and the question a
   const filtered = scopeThread(caseThread, brianId);
   assert.deepEqual(filtered.entries.map((item) => item.id), ['question-6013752', 'answer-12973823', 'comment-2833029']);
   assert.equal(filtered.excludedCount, 1);
-  const selected = { supportAuthorId: brianId, actions: { [brianComment.id]: 'strike' },
-    roles: { [priyaComment.authorId]: 'customer' } };
+  const selected = {
+    supportAuthorId: brianId, actions: { [brianComment.id]: 'strike' },
+    roles: { [priyaComment.authorId]: 'customer' }
+  };
   assert.equal(planAction(caseThread, selected, today).action, 'Send last quality response');
   assert.equal(planAction(caseThread, selected, today).due, '2026-10-02');
   assert.equal(planAction(caseThread, { ...selected, actions: {} }, today).due, '2026-10-02');
@@ -222,8 +225,31 @@ test('a later unanswered support comment is the first ongoing strike', () => {
   const activity = thread([response, reply, followUp, strike]);
   assert.equal(inferPostAction(strike, activity.entries, 'customer', 'staff'), 'strike');
   const result = planAction(activity, settings(), today);
-  assert.equal(result.action, 'Post second strike comment');
+  assert.equal(result.action, 'Send last quality response');
   assert.equal(result.due, '2026-10-05');
+});
+test('Developer Community ADO squad case treats the early follow-up as a response and calendars closure', () => {
+  const caseThread = {
+    id: '11164999',
+    url: 'https://developercommunity.visualstudio.com/t/ADO-squad-list-blocks-team-member-additi/11164999',
+    title: 'ADO squad list blocks team member addition due to user permissions',
+    site: 'devcommunity',
+    entries: [
+      entry('11164999', 'question', '1761226', '2026-10-13T07:55:15Z'),
+      entry('11165079', 'comment', '1733019', '2026-10-13T10:26:05Z'),
+      entry('11165081', 'comment', '1733019', '2026-10-13T10:34:35Z'),
+      entry('11167462', 'comment', '1733019', '2026-10-16T10:28:10Z')
+    ]
+  };
+  const settings = { supportAuthorId: '1733019', actions: {} };
+  assert.equal(inferPostAction(caseThread.entries[2], caseThread.entries, '1761226', '1733019'), 'response');
+  assert.equal(inferPostAction(caseThread.entries[3], caseThread.entries, '1761226', '1733019'), 'strike');
+  const result = planAction(caseThread, settings, new Date('2026-10-19T12:00:00'));
+  assert.equal(result.action, 'Send last quality response');
+  assert.equal(result.due, '2026-10-20');
+  const summary = caseSummary(caseThread, result, '2026-10-19T12:00:00Z', '1733019');
+  const days = calendarWeek([summary], new Date(2026, 9, 19, 12), new Date(2026, 9, 19, 12));
+  assert.ok(days.find((day) => day.key === '2026-10-20').events.some((event) => event.kind === 'due' && event.item.id === '11164999'));
 });
 test('question-author comments before the first answer do not select ongoing', () => {
   const earlyComment = entry('comment-early', 'comment', 'customer', '2026-09-24T12:00:00Z');
@@ -231,8 +257,10 @@ test('question-author comments before the first answer do not select ongoing', (
   assert.equal(planAction(thread([earlyComment, response]), settings(), today).due, '2026-09-30');
 });
 test('accepted Brian answer overrides missing author IDs and does not report CI closure', () => {
-  const accepted = { entries: [question, response, entry('comment-ignored', 'comment', '', '2026-09-29T12:00:00Z')],
-    acceptedAnswerId: response.id, hasUnidentifiedAuthors: true };
+  const accepted = {
+    entries: [question, response, entry('comment-ignored', 'comment', '', '2026-09-29T12:00:00Z')],
+    acceptedAnswerId: response.id, hasUnidentifiedAuthors: true
+  };
   const result = planAction(accepted, settings(), today);
   assert.equal(result.action, 'Your answer was accepted');
   assert.equal(result.tone, 'completed');

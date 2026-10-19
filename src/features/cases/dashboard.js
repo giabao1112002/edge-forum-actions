@@ -17,6 +17,7 @@ function caseSummary(thread, result, checkedAt, supportAuthorId, actions = {}) {
     : evidence === 'Accepted answer' ? 'Answer accepted'
     : evidence?.toLowerCase().includes('strike') ? `Strike ${result.postedStrikes?.length || 1}`
     : evidence === 'Your latest response' ? 'Customer follow-up response'
+    : evidence === 'Your additional response' ? 'Additional response'
     : evidence === 'Your first answer' ? 'First answer' : null;
   return { id: thread.id, url: thread.url, title: thread.title, action: result.action,
     due: result.due || null, predictedClose: result.predictedClose || null, tone: result.tone, checkedAt,
