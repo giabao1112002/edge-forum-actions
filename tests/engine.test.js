@@ -13,6 +13,69 @@ const today = new Date('2026-09-30T12:00:00Z');
 test('business days skip weekends', () => {
   assert.equal(addBusinessDays(response.timestamp, 3).toISOString().slice(0, 10), '2026-09-30');
 });
+test('WICLOUD teammate follow-up on the owner answer counts as the first strike', () => {
+  const owned = { ...response, author: 'Brian Pham (WICLOUD CORPORATION)' };
+  const teammate = { id: 'comment-leon', type: 'comment', authorId: 'leon',
+    author: 'Leon Tran (WICLOUD CORPORATION)', parentAnswerId: owned.id,
+    timestamp: '2026-09-28T10:00:00Z',
+    content: "I just wanted to follow up and check whether Brian's answer has resolved your issue. If you need further help, let me know." };
+  const activity = { site: 'learn', entries: [{ ...question, author: 'Vaishali Narendra Ghuge' }, owned, teammate] };
+  const scoped = scopeThread(activity, 'staff');
+  assert.equal(scoped.entries.find((entry) => entry.id === teammate.id).teamReply, true);
+  assert.equal(scoped.entries.find((entry) => entry.id === teammate.id).customerReply, false);
+  const result = planAction(activity, settings(), today);
+  assert.equal(result.action, 'Send last quality response');
+  assert.equal(result.due, '2026-09-30');
+  assert.deepEqual(result.postedStrikes, ['2026-09-28']);
+  assert.equal(result.evidence[0].actor, teammate.author);
+  const summary = caseSummary({ ...activity, id: '1', title: 'Case', url: 'https://learn.microsoft.com/en-us/answers/questions/1/x' },
+    result, today.toISOString(), 'staff');
+  assert.equal(summary.lastSupportPost.author, teammate.author);
+  assert.equal(summary.lastSupportPost.step, 'Strike 1');
+  const customer = { id: 'comment-customer', type: 'comment', authorId: 'customer',
+    parentAnswerId: owned.id, timestamp: '2026-10-01T09:00:00Z' };
+  assert.equal(planAction({ ...activity, entries: [...activity.entries, customer] }, settings(), today).action,
+    'Follow up with customer');
+  const teamResponse = { ...teammate, id: 'comment-leon-response', timestamp: '2026-10-02T10:00:00Z',
+    content: 'Please try this setting and share the result.' };
+  const next = planAction({ ...activity, entries: [...activity.entries, customer, teamResponse] }, settings(), today);
+  assert.equal(next.action, 'Post first strike comment');
+  assert.equal(next.due, '2026-10-06');
+  assert.equal(next.evidence[0].actor, teammate.author);
+  assert.equal(next.pm, undefined);
+});
+
+test('ambiguous teammate comments request review; unrelated authors and other answers stay excluded', () => {
+  const teammate = { id: 'comment-team', type: 'comment', authorId: 'leon',
+    author: 'Leon Tran (WICLOUD CORPORATION)', parentAnswerId: response.id,
+    timestamp: '2026-09-28T10:00:00Z', content: 'Thanks for the update.' };
+  const activity = { site: 'learn', entries: [{ ...question, author: 'Vaishali (WICLOUD CORPORATION)' }, response, teammate] };
+  assert.equal(planAction(activity, settings(), today).action, 'Review needed');
+  assert.equal(planAction(activity, settings({ [teammate.id]: 'strike' }), today).action,
+    'Send last quality response');
+  const outsider = { ...teammate, author: 'Leon Tran', id: 'comment-outsider' };
+  assert.equal(scopeThread({ ...activity, entries: [...activity.entries, outsider] }, 'staff').entries
+    .some((entry) => entry.id === outsider.id), false);
+  const otherAnswer = { id: 'answer-other', type: 'answer', authorId: 'other', timestamp: response.timestamp };
+  assert.equal(scopeThread({ ...activity, entries: [...activity.entries, otherAnswer,
+    { ...teammate, id: 'comment-elsewhere', parentAnswerId: otherAnswer.id }] }, 'staff').entries
+    .some((entry) => entry.id === 'comment-elsewhere'), false);
+});
+test('Q&A schedules one PM after the first answer and never restarts it after customer reply', () => {
+  const first = planAction(thread([response]), settings(), today);
+  assert.deepEqual(first.pm, { anchorId: 'answer-1', due: '2026-09-28', sentAt: null });
+  const sent = planAction(thread([response]), { ...settings(), pmSent: { 'answer-1': '2026-09-28T12:00:00Z' } }, today);
+  assert.equal(sent.pm.sentAt, '2026-09-28T12:00:00Z');
+  assert.equal(sent.due, first.due);
+  const customer = entry('reply-1', 'comment', 'customer', '2026-09-29T12:00:00Z');
+  assert.equal(planAction(thread([response, customer]), settings(), today).pm, undefined);
+  const newer = entry('response-2', 'comment', 'staff', '2026-09-30T12:00:00Z');
+  assert.equal(planAction(thread([response, customer, newer]),
+    settings({ 'response-2': 'response' }), today).pm, undefined);
+  assert.deepEqual(planAction(thread([response, newer]), settings({ 'response-2': 'response' }), today).pm,
+    first.pm);
+  assert.equal(planAction({ ...thread([response]), site: 'devcommunity' }, settings(), today).pm, undefined);
+});
 test('first response leads to a strike after three business days', () => {
   const result = planAction(thread([response]), settings(), today);
   assert.equal(result.action, 'Post first strike comment');

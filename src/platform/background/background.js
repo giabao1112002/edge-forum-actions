@@ -80,11 +80,11 @@ async function updateBadge() {
   const keys = sites.map((site) => profileStorageKey(configuredProfileId(stored, site), site, 'cases'));
   const saved = keys.length ? await chrome.storage.local.get(keys) : {};
   const cases = keys.flatMap((key) => saved[key] || []);
-  const attention = cases.filter((item) => item.due && ['reply', 'urgent', 'today', 'overdue'].includes(todayActivity(item)));
+  const attention = cases.filter((item) => item.due && ['reply', 'urgent', 'today', 'overdue'].includes(todayActivity(item)) || pmActivity(item));
   await chrome.action.setBadgeText({ text: attention.length ? String(attention.length) : '' });
   await chrome.action.setTitle({ title: attention.length ? `${attention.length} saved case(s) need action (last known status)` : 'Forum Action Planner' });
   if (attention.length) await chrome.action.setBadgeBackgroundColor({ color: attention.some((item) =>
-    ['urgent', 'overdue'].includes(todayActivity(item))) ? '#d76154' : '#b37400' });
+    ['urgent', 'overdue'].includes(todayActivity(item)) || pmActivity(item) === 'overdue') ? '#d76154' : '#b37400' });
 }
 
 async function notifyDueCases(profileId, cases, sourceSite = 'learn') {
@@ -96,26 +96,35 @@ async function notifyDueCases(profileId, cases, sourceSite = 'learn') {
   if (!enabled) return;
   const now = new Date();
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const due = cases.filter((item) => !item.error && item.due &&
-    ['reply', 'urgent', 'today', 'overdue'].includes(todayActivity(item, now)));
+  const due = cases.flatMap((item) => {
+    if (item.error) return [];
+    const actions = [];
+    if (item.due && ['reply', 'urgent', 'today', 'overdue'].includes(todayActivity(item, now)))
+      actions.push({ item, key: `${item.id}:${item.action}:${item.due}`, text: `${caseTitle(item)}: ${item.action}` });
+    if (pmActivity(item, now)) actions.push({ item, key: `${item.id}:pm:${item.pm.anchorId}:${item.pm.due}`,
+      text: `${caseTitle(item)}: PM customer - confirm manually`, pm: true });
+    return actions;
+  });
   const alerted = history?.day === day ? history.keys || [] : [];
-  let fresh = due.filter((item) => !alerted.includes(`${item.id}:${item.action}:${item.due}`));
+  let fresh = due.filter((action) => !alerted.includes(action.key));
   if (!fresh.length) return;
   const { iconUrl } = await parserMessage('icon');
   const current = await chrome.storage.local.get(['supportAuthorId', 'supportSite', 'supportProfiles',
     profileStorageKey(profileId, site, 'cases'), reminderKey]);
   if (configuredProfileId(current, site) !== profileId || !current[reminderKey]) return;
-  fresh = fresh.filter((item) => (current[profileStorageKey(profileId, site, 'cases')] || []).some((saved) =>
-    saved.id === item.id && !saved.error && saved.action === item.action && saved.due === item.due));
+  fresh = fresh.filter((action) => (current[profileStorageKey(profileId, site, 'cases')] || []).some((saved) =>
+    saved.id === action.item.id && !saved.error && (action.pm
+      ? saved.pm?.anchorId === action.item.pm.anchorId && pmActivity(saved, now)
+      : saved.action === action.item.action && saved.due === action.item.due)));
   if (!fresh.length) return;
   const notificationId = site === 'learn' ? `forum-due-${profileId}` : `forum-due-${site}-${profileId}`;
   await chrome.notifications.create(notificationId, {
-    type: 'basic', iconUrl, title: `${fresh.length} case(s) need action`,
-    message: fresh.slice(0, 2).map((item) => `${caseTitle(item)}: ${item.action}`).join('\n') +
+    type: 'basic', iconUrl, title: `${fresh.length} case action(s) need attention`,
+    message: fresh.slice(0, 2).map((action) => action.text).join('\n') +
       (fresh.length > 2 ? `\nAnd ${fresh.length - 2} more. Open My Cases to review.` : '')
   });
   await chrome.storage.local.set({ [notifiedKey]: {
-    day, keys: [...alerted, ...fresh.map((item) => `${item.id}:${item.action}:${item.due}`)]
+    day, keys: [...alerted, ...fresh.map((action) => action.key)]
   } });
 }
 
@@ -171,7 +180,7 @@ async function discoverSavedCases(profileId, sourceSite) {
           const correction = settings[correctionKey] ||
             (settings[legacyKey]?.supportAuthorId === profileId ? settings[legacyKey] : null);
           const actions = correction?.actions || {};
-          const summary = caseSummary(thread, planAction(thread, { supportAuthorId: profileId, actions }),
+          const summary = caseSummary(thread, planAction(thread, { supportAuthorId: profileId, actions, pmSent: correction?.pmSent }),
             new Date().toISOString(), profileId, actions);
           if (!await profileIsConfigured(profileId, site)) break;
           const result = await changeCase({ type: 'add', source: 'activity', profileId, id: link.id, summary, site });
@@ -219,7 +228,8 @@ async function refreshSavedCases() {
           const settings = await chrome.storage.local.get([correctionKey, legacyKey]);
           const correction = settings[correctionKey] ||
             (site === 'learn' && settings[legacyKey]?.supportAuthorId === profileId ? settings[legacyKey] : null);
-          summary = caseSummary(thread, planAction(thread, { supportAuthorId: profileId, actions: correction?.actions || {} }),
+          summary = caseSummary(thread, planAction(thread, { supportAuthorId: profileId, actions: correction?.actions || {},
+            pmSent: correction?.pmSent }),
             new Date().toISOString(), profileId, correction?.actions || {});
         } catch (error) {
           summary = { ...saved, error: error.message };

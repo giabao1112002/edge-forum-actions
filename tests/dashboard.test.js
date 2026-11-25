@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { caseSummary, caseTitle, caseStatus, caseCategory, caseStep, todayActivity, sortCases, calendarWeek } = require('../src/features/cases/dashboard');
+const { caseSummary, caseTitle, caseStatus, caseCategory, caseStep, todayActivity, pmActivity, sortCases, calendarWeek } = require('../src/features/cases/dashboard');
 const { planAction } = require('../src/core/engine');
 const now = new Date('2026-09-30T12:00:00Z');
 
@@ -15,6 +15,17 @@ test('keeps only display metadata and source link in saved case summaries', () =
 test('shows the saved Q&A number before the case title', () => {
   assert.equal(caseTitle({ id: '6019097', title: 'Not able to install VS 2026 profession in my machine.' }),
     '6019097 - Not able to install VS 2026 profession in my machine.');
+});
+test('PM appears separately from the forum deadline and manual confirmation clears its pending state', () => {
+  const item = { id: '1', title: 'Case', action: 'Post first strike comment', due: '2026-09-30', tone: 'today',
+    pm: { anchorId: 'answer-1', due: '2026-09-30', sentAt: null } };
+  assert.equal(pmActivity(item, now), 'today');
+  assert.deepEqual(calendarWeek([item], now, now).find((day) => day.key === '2026-09-30').events
+    .map((event) => event.kind), ['pm-due', 'due']);
+  const sent = { ...item, pm: { ...item.pm, sentAt: '2026-09-30T10:00:00Z' } };
+  assert.equal(pmActivity(sent, now), null);
+  assert.deepEqual(calendarWeek([sent], now, now).find((day) => day.key === '2026-09-30').events
+    .map((event) => event.kind), ['due', 'pm-sent']);
 });
 test('recalculates due today and overdue as the day changes, and sorts urgent cases first', () => {
   const items = [
@@ -118,13 +129,18 @@ test('a refreshed customer reply removes the previous strike and close forecast 
   const settings = { supportAuthorId: 'staff', actions: {} };
   const before = caseSummary(original, planAction(original, settings, now), now.toISOString(), 'staff');
   assert.equal(before.predictedClose, '2026-10-02');
+  assert.equal(before.pm.anchorId, 'answer-1');
   const refreshed = { ...original, entries: [...original.entries,
     { id: 'comment-1', type: 'comment', authorId: 'customer', parentAnswerId: 'answer-1',
       timestamp: '2026-09-30T10:00:00Z' }] };
   const after = caseSummary(refreshed, planAction(refreshed, settings, now), now.toISOString(), 'staff');
   assert.equal(after.predictedClose, null);
+  assert.equal(after.pm, null);
+  assert.equal(pmActivity(after, now), null);
+  assert.equal(todayActivity(after, now), 'reply');
   const days = calendarWeek([after], new Date(2026, 8, 30, 12), new Date(2026, 8, 30, 12));
   assert.deepEqual(days[2].events.map((event) => event.kind), ['reply']);
   assert.deepEqual(days[3].events.map((event) => event.kind), ['due']);
   assert.equal(days.flatMap((day) => day.events).some((event) => event.kind === 'prediction'), false);
+  assert.equal(days.flatMap((day) => day.events).some((event) => event.kind.startsWith('pm-')), false);
 });

@@ -1,5 +1,5 @@
 // Calendar navigation is view-local; saved cases are read from shared app state.
-function createCalendarView({ document, state, domain }) {
+function createCalendarView({ document, state, domain, setPmStatus }) {
   const { calendarWeek, localDateKey, caseStep, caseTitle } = domain;
   let calendarWeekOf = new Date();
   let calendarSelectedDate = localDateKey(new Date());
@@ -7,14 +7,20 @@ function createCalendarView({ document, state, domain }) {
     return kind === 'due' && item.action === 'Follow up with customer' && dayKey <= localDateKey(new Date()) ? 'urgent' : kind;
   }
   function calendarEventDescription(kind, item) {
-    return `${item.error ? 'Last known: ' : ''}${kind === 'due' ? `Calculated due: ${caseStep(item.action)} - Not complete`
+    return `${item.error ? 'Last known: ' : ''}${kind === 'pm-due' ? `PM customer due ${item.pm.due} - Not confirmed`
+      : kind === 'pm-overdue' ? `PM customer overdue since ${item.pm.due} - Not confirmed`
+      : kind === 'pm-sent' ? `PM confirmed manually on ${new Date(item.pm.sentAt).toLocaleString()}`
+      : kind === 'due' ? `Calculated due: ${caseStep(item.action)} - Not complete`
       : kind === 'reply' ? `Customer replied - respond now; final deadline ${item.due}`
       : kind === 'overdue' ? `${caseStep(item.action)} overdue since ${item.due}`
       : kind === 'prediction' ? 'Forecast only: close step if no reply (CI closure unverified)'
-      : item.lastSupportPost.step ? `Observed: ${item.lastSupportPost.step} - Complete (forum post)`
-      : `Observed: ${item.lastSupportPost.type} posted (step not confirmed)`}`;
+      : item.lastSupportPost.step ? `Observed: ${item.lastSupportPost.step} - Complete (forum post)${item.lastSupportPost.teammate ? ` by ${item.lastSupportPost.author}` : ''}`
+      : `Observed: ${item.lastSupportPost.type} posted${item.lastSupportPost.teammate ? ` by ${item.lastSupportPost.author}` : ''} (step not confirmed)`}`;
   }
   function calendarChipLabel(kind, item) {
+    if (kind === 'pm-due') return 'PM due';
+    if (kind === 'pm-overdue') return 'PM overdue';
+    if (kind === 'pm-sent') return 'PM confirmed';
     if (kind === 'reply') return 'Respond now';
     if (kind === 'overdue') return 'Overdue';
     if (kind === 'prediction') return 'Close forecast';
@@ -101,6 +107,17 @@ function createCalendarView({ document, state, domain }) {
       detail.textContent = `${calendarEventDescription(kind, item)}${item.site
         ? ` · Source: ${item.site === 'devcommunity' ? 'Developer Community' : 'Microsoft Learn'}` : ''}`;
       event.append(link, detail);
+      if (['pm-due', 'pm-overdue', 'pm-sent'].includes(kind)) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = kind === 'pm-sent' ? 'Undo PM confirmation' : 'I sent the PM';
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try { await setPmStatus(item, kind !== 'pm-sent'); }
+          finally { button.disabled = false; }
+        });
+        event.append(button);
+      }
       agenda.append(event);
     }
   }

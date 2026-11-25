@@ -21,9 +21,9 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
   const app = { readThread, extractForumThread, loadThread, refreshSavedCases, initialize,
     renderCases: () => casesView.renderCases() };
   const { activateTab } = views.createTabs({ document });
-  const { renderThread } = views.createThreadView({ document, state, domain, saveAndRender });
-  const { renderCalendar } = views.createCalendarView({ document, state, domain });
-  const casesView = views.createCasesView({ document, state, domain, persistCases, renderThread, renderCalendar });
+  const { renderThread } = views.createThreadView({ document, state, domain, saveAndRender, setPmStatus });
+  const { renderCalendar } = views.createCalendarView({ document, state, domain, setPmStatus });
+  const casesView = views.createCasesView({ document, state, domain, persistCases, renderThread, renderCalendar, setPmStatus });
   const renderCases = () => casesView.renderCases();
   const { loadDiscord, loadTeams, loadReminders } = views.createSettingsController({ document, chrome, state,
     resolveSupportProfileDetails, syncProfileCases, loadSettings, loadAllCases, renderCases, renderThread });
@@ -110,7 +110,33 @@ function createPopupApp({ document, chrome, state, domain, extractForumThread, v
     const saved = await chrome.storage.local.get([scopedKey, legacyKey]);
     const current = saved[scopedKey];
     const legacy = saved[legacyKey];
-    return { supportAuthorId: profileId, supportSite: site, actions: { ...(current?.actions || (!current && legacy?.supportAuthorId === profileId ? legacy.actions : {}) || {}) } };
+    return { supportAuthorId: profileId, supportSite: site,
+      actions: { ...(current?.actions || (!current && legacy?.supportAuthorId === profileId ? legacy.actions : {}) || {}) },
+      pmSent: { ...(current?.pmSent || {}) } };
+  }
+  async function setPmStatus(item, sent) {
+    const site = normalizeSupportSite(item.site || 'learn');
+    if (site !== 'learn' || !item.pm?.anchorId || state.profileLoading) return;
+    const profileId = state.supportProfiles?.[site]?.id || (site === activeSite() ? state.supportAuthorId : '');
+    if (!profileId) return;
+    const current = state.cases.find((saved) => saved.id === item.id && saved.site === site);
+    const currentThread = state.thread?.id === item.id && normalizeSupportSite(state.thread.site || activeSite()) === site
+      ? state.thread : null;
+    const currentPm = currentThread ? planAction(currentThread, state.settings).pm : current?.pm;
+    if (currentPm?.anchorId !== item.pm.anchorId) return;
+    const settings = await loadSettings(item.id, profileId, site);
+    const activeProfileId = state.supportProfiles?.[site]?.id || (site === activeSite() ? state.supportAuthorId : '');
+    if (state.profileLoading || activeProfileId !== profileId) return;
+    if (sent) settings.pmSent[item.pm.anchorId] = new Date().toISOString();
+    else delete settings.pmSent[item.pm.anchorId];
+    const summary = currentThread
+      ? caseSummary(currentThread, planAction(currentThread, settings), new Date().toISOString(), profileId, settings.actions)
+      : { ...current, pm: { ...current.pm, sentAt: settings.pmSent[item.pm.anchorId] || null } };
+    await persistCases({ type: 'correct', id: item.id, expected: current, summary, settings, site });
+    if (currentThread === state.thread) {
+      state.settings = settings;
+      renderThread();
+    }
   }
   async function saveAndRender(valueThread = state.thread, valueSettings = state.settings) {
     if (state.profileLoading || valueThread !== state.thread || valueSettings !== state.settings || valueSettings.supportAuthorId !== state.supportAuthorId) return;

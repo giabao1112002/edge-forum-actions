@@ -129,6 +129,28 @@ test('five-minute checks refresh saved cases, update badges, notify once per act
   assert.equal(app.listeners.opened.url, 'chrome-extension://test/src/ui/popup/popup.html');
 });
 
+test('PM alone triggers a local reminder and confirmation survives refresh without a second PM cycle', async () => {
+  const app = background({ supportAuthorId: profileId, [`cases-${profileId}`]: [dueCase],
+    [`reminders-${profileId}`]: true });
+  app.setNow('2026-09-29T12:00:00Z');
+  await app.context.refreshSavedCases();
+  assert.equal(app.saved[`cases-${profileId}`][0].pm.anchorId, 'answer-1');
+  assert.equal(app.badges.at(-1), '1');
+  assert.equal(app.notifications.length, 1);
+  assert.match(app.notifications[0].details.message, /PM customer - confirm manually/);
+  app.saved[`thread-${profileId}-1234`] = { pmSent: { 'answer-1': '2026-09-29T13:00:00Z' } };
+  await app.context.refreshSavedCases();
+  assert.equal(app.saved[`cases-${profileId}`][0].pm.sentAt, '2026-09-29T13:00:00Z');
+  assert.equal(app.badges.at(-1), '');
+  assert.equal(app.notifications.length, 1);
+  app.setThread({ ...thread, entries: [...thread.entries,
+    { id: 'reply-1', type: 'comment', authorId: 'customer', parentAnswerId: 'answer-1', timestamp: '2026-09-30T09:00:00Z' },
+    { id: 'response-2', type: 'comment', authorId: profileId, parentAnswerId: 'answer-1', timestamp: '2026-09-30T10:00:00Z' }] });
+  app.setNow('2026-10-01T12:00:00Z');
+  await app.context.refreshSavedCases();
+  assert.equal(app.saved[`cases-${profileId}`][0].pm, null);
+});
+
 test('notifications stay optional and failed checks preserve the last known case without alerting', async () => {
   const app = background({ supportAuthorId: profileId, [`cases-${profileId}`]: [dueCase] });
   app.setError('Network unavailable');

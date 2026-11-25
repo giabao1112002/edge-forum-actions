@@ -6,9 +6,11 @@ function detectThreadSite(url = '', fallback = 'learn') {
 }
 
 function caseSummary(thread, result, checkedAt, supportAuthorId, actions = {}) {
+  const scope = typeof module !== 'undefined' ? require('../../core/engine').scopeThread : scopeThread;
+  const scoped = scope(thread, supportAuthorId);
   const ownAnswers = new Set(thread.entries.filter((entry) => entry.type === 'answer' && entry.authorId === supportAuthorId)
     .map((entry) => entry.id));
-  const lastPost = thread.entries.filter((entry) => entry.authorId === supportAuthorId &&
+  const lastPost = scoped.entries.filter((entry) => (entry.authorId === supportAuthorId || entry.teamReply) &&
     (entry.type === 'answer' || entry.type === 'comment') &&
     (!entry.parentAnswerId || ownAnswers.has(entry.parentAnswerId)) && actions[entry.id] !== 'ignore')
     .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))[0];
@@ -21,8 +23,10 @@ function caseSummary(thread, result, checkedAt, supportAuthorId, actions = {}) {
     : evidence === 'Your first answer' ? 'First answer' : null;
   return { id: thread.id, url: thread.url, title: thread.title, action: result.action,
     due: result.due || null, predictedClose: result.predictedClose || null, tone: result.tone, checkedAt,
+    pm: result.pm || null,
     site: detectThreadSite(thread.url, thread.site || 'learn'),
-    lastSupportPost: lastPost ? { timestamp: lastPost.timestamp, type: lastPost.type, step } : null };
+    lastSupportPost: lastPost ? { timestamp: lastPost.timestamp, type: lastPost.type, step,
+      ...(lastPost.teamReply ? { teammate: true, author: lastPost.author } : {}) } : null };
 }
 
 function caseTitle(item) {
@@ -64,6 +68,12 @@ function todayActivity(item, now = new Date()) {
   return null;
 }
 
+function pmActivity(item, now = new Date()) {
+  if (!item.pm || item.pm.sentAt) return null;
+  const today = localDateKey(now);
+  return item.pm.due < today ? 'overdue' : item.pm.due === today ? 'today' : null;
+}
+
 function sortCases(cases, now = new Date()) {
   const order = { overdue: 0, today: 1, upcoming: 2, neutral: 3, completed: 4 };
   return [...cases].sort((left, right) =>
@@ -86,6 +96,15 @@ function calendarWeek(cases, weekOf = new Date(), now = new Date()) {
   const todayKey = localDateKey(now);
   const add = (key, kind, item) => byDate.get(key)?.push({ kind, item });
   for (const item of cases) {
+    if (item.pm) {
+      if (item.pm.sentAt) {
+        const sent = new Date(item.pm.sentAt);
+        if (Number.isFinite(sent.getTime())) add(localDateKey(sent), 'pm-sent', item);
+      } else {
+        add(item.pm.due, 'pm-due', item);
+        if (item.pm.due < todayKey) add(todayKey, 'pm-overdue', item);
+      }
+    }
     if (item.due) {
       add(item.due, 'due', item);
       if (item.due < todayKey) add(todayKey, 'overdue', item);
@@ -95,9 +114,9 @@ function calendarWeek(cases, weekOf = new Date(), now = new Date()) {
     if (postDate && Number.isFinite(postDate.getTime())) add(localDateKey(postDate), 'observed', item);
     if (item.predictedClose && caseCategory(item) === 'strike') add(item.predictedClose, 'prediction', item);
   }
-  const order = { overdue: 0, reply: 1, due: 2, observed: 3, prediction: 4 };
+  const order = { 'pm-overdue': 0, overdue: 1, reply: 2, 'pm-due': 3, due: 4, 'pm-sent': 5, observed: 6, prediction: 7 };
   for (const day of days) day.events.sort((left, right) => order[left.kind] - order[right.kind] ||
     caseTitle(left.item).localeCompare(caseTitle(right.item)));
   return days;
 }
-if (typeof module !== 'undefined') module.exports = { caseSummary, caseTitle, caseStatus, caseCategory, caseStep, postedToday, todayActivity, sortCases, localDateKey, calendarWeek };
+if (typeof module !== 'undefined') module.exports = { caseSummary, caseTitle, caseStatus, caseCategory, caseStep, postedToday, todayActivity, pmActivity, sortCases, localDateKey, calendarWeek };

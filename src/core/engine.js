@@ -9,11 +9,18 @@ function addBusinessDays(timestamp, count) {
 }
 
 function sameCustomerName(left, right) {
-  const words = (value) => new Set(String(value || '').normalize('NFKD').toLowerCase()
+  const words = (value) => new Set(String(value || '').replace(/\(\s*WICLOUD\s+CORPORATION\s*\)\s*$/iu, '')
+    .normalize('NFKD').toLowerCase()
     .match(/[\p{L}\p{N}]{5,}/gu)?.filter((word) => !['customer', 'unknown', 'microsoft', 'support',
       'anonymous', 'question', 'author', 'profile'].includes(word)) || []);
   const original = words(left);
   return [...words(right)].some((word) => original.has(word));
+}
+
+function isWicloudTeammate(entry, questionAuthorId, supportAuthorId, site = 'learn') {
+  return site !== 'devcommunity' && entry.type === 'comment' && !!entry.authorId &&
+    entry.authorId !== questionAuthorId && entry.authorId !== supportAuthorId &&
+    /\(\s*WICLOUD\s+CORPORATION\s*\)\s*$/iu.test(String(entry.author || '').normalize('NFKC'));
 }
 
 function scopeThread(thread, supportAuthorId) {
@@ -25,14 +32,18 @@ function scopeThread(thread, supportAuthorId) {
     .map((entry) => entry.id));
   const replyToOwnAnswer = (entry) => entry.type === 'comment' && supportAnswers.has(entry.parentAnswerId) &&
     entry.authorId && entry.authorId !== supportAuthorId && sameCustomerName(question?.author, entry.author);
+  const teammateOnOwnAnswer = (entry) => supportAnswers.has(entry.parentAnswerId) &&
+    !replyToOwnAnswer(entry) && isWicloudTeammate(entry, authorId, supportAuthorId, thread.site);
   const isRelevant = (entry) => entry.type === 'question' ||
     (!entry.parentAnswerId || supportAnswers.has(entry.parentAnswerId)) &&
-    entry.authorId && (entry.authorId === authorId || entry.authorId === supportAuthorId || replyToOwnAnswer(entry));
+    entry.authorId && (entry.authorId === authorId || entry.authorId === supportAuthorId ||
+      replyToOwnAnswer(entry) || teammateOnOwnAnswer(entry));
   const entries = thread.entries.filter(isRelevant).map((entry) =>
     entry.id === firstCommunityResponse && entry.type === 'comment' ? { ...entry, type: 'answer' }
       : {
         ...entry, customerReply: entry.type === 'comment' && entry.authorId !== supportAuthorId &&
-          (entry.authorId === authorId || replyToOwnAnswer(entry))
+          (entry.authorId === authorId || replyToOwnAnswer(entry)),
+        teamReply: teammateOnOwnAnswer(entry)
       });
   return {
     ...thread, entries, excludedCount: thread.entries.length - entries.length,
@@ -48,7 +59,7 @@ function inferProcessStage(entries, customerAuthorId, supportAuthorId) {
   const customerReplies = afterAnswer.filter((entry) => entry.customerReply || entry.authorId === customerAuthorId);
   if (!customerReplies.length) return 'first';
   const latestCustomerReply = customerReplies[customerReplies.length - 1];
-  const replied = afterAnswer.some((entry) => entry.authorId === supportAuthorId &&
+  const replied = afterAnswer.some((entry) => (entry.authorId === supportAuthorId || entry.teamReply) &&
     Date.parse(entry.timestamp) > Date.parse(latestCustomerReply.timestamp));
   return replied ? 'ongoing' : 'awaiting-customer';
 }
@@ -61,27 +72,29 @@ function inferLearnCommentIntent(entry) {
   if (closing) return 'last';
   const investigation = /\b(?:please|could you(?: please)?) (?:try|run|check|share|provide|collect|verify|confirm|test)\b|\b(?:i reviewed|i recommend|i would recommend|based on (?:the|your)|evidence suggests|to (?:help )?(?:investigate|troubleshoot))\b/.test(content);
   if (investigation) return 'response';
-  const reminder = /\b(?:haven't|have not) heard (?:back )?from you\b|\b(?:haven't|have not) heard back\b|\b(?:just )?wanted to check (?:whether|if) you (?:had|have) a chance\b|\b(?:checking in|following up on my previous response|follow up on my previous response)\b/.test(content);
+  const reminder = /\b(?:haven't|have not) heard (?:back )?from you\b|\b(?:haven't|have not) heard back\b|\b(?:just )?wanted to check (?:whether|if) you (?:had|have) a chance\b|\b(?:checking in|following up on my previous response|follow up on my previous response)\b|\b(?:follow up|following up).{0,140}\b(?:resolved your issue|answered your question)\b/.test(content);
   return reminder ? 'strike' : null;
 }
 
 function inferPostAction(entry, entries, customerAuthorId, supportAuthorId, overrides = {}, site = 'learn') {
   if (entry.type === 'answer') return 'response';
+  const isStaff = (item) => item.authorId === supportAuthorId || item.teamReply;
   const earlier = entries.filter((item) => Date.parse(item.timestamp) < Date.parse(entry.timestamp));
   const latestCustomer = [...earlier].reverse().find((item) => item.type !== 'question' &&
     (item.customerReply || item.authorId === customerAuthorId));
-  const latestSupport = [...earlier].reverse().find((item) => item.authorId === supportAuthorId);
+  const latestSupport = [...earlier].reverse().find(isStaff);
   if (latestCustomer && (!latestSupport || Date.parse(latestCustomer.timestamp) > Date.parse(latestSupport.timestamp)))
-    return 'response';
+    return entry.teamReply ? inferLearnCommentIntent(entry) || 'review' : 'response';
   const firstAnswer = entries.find((item) => item.type === 'answer' && item.authorId === supportAuthorId);
   const lastExplicitResponse = site === 'devcommunity' ? null : [...earlier].reverse().find((item) =>
-    item.type === 'comment' && item.authorId === supportAuthorId &&
+    item.type === 'comment' && isStaff(item) &&
     Date.parse(item.timestamp) > Date.parse(latestCustomer?.timestamp || firstAnswer?.timestamp || 0) &&
     (overrides[item.id] === 'response' || inferLearnCommentIntent(item) === 'response'));
-  const strikes = earlier.filter((item) => item.type === 'comment' && item.authorId === supportAuthorId &&
+  const strikes = earlier.filter((item) => item.type === 'comment' && isStaff(item) &&
     Date.parse(item.timestamp) > Date.parse(lastExplicitResponse?.timestamp || latestCustomer?.timestamp || firstAnswer?.timestamp || 0) &&
     (overrides[item.id] || inferPostAction(item, entries, customerAuthorId, supportAuthorId, overrides, site)) === 'strike');
   const contentIntent = site === 'devcommunity' ? null : inferLearnCommentIntent(entry);
+  if (entry.teamReply && !contentIntent) return 'review';
   if (contentIntent === 'last') return strikes.length ? 'last' : 'response';
   if (contentIntent) return contentIntent;
   const posted = new Date(entry.timestamp);
@@ -133,10 +146,16 @@ function planAction(thread, settings, now = new Date()) {
       action: settings.actions?.[entry.id] || inferPostAction(entry, scoped.entries, question.authorId, settings.supportAuthorId,
         settings.actions, thread.site)
     }));
+  const ambiguousTeammate = events.find((event) => event.teamReply && event.action === 'review');
+  if (ambiguousTeammate) return { ...review(`Classify ${ambiguousTeammate.author}'s teammate comment before calculating the next deadline.`),
+    evidence: [sourceEvent('Teammate comment needs review', ambiguousTeammate)] };
   const relevant = events.filter((event) => event.role === 'customer' || event.role === 'staff' && event.action !== 'ignore');
   const customer = [...relevant].reverse().find((event) => event.role === 'customer');
   const staff = [...relevant].reverse().find((event) => event.role === 'staff');
   if (!staff) return review('No staff response found. Review thread status.');
+  const withPm = (result) => thread.site !== 'devcommunity' && !customer && result.action !== 'Review needed'
+    ? { ...result, pm: { anchorId: firstAnswer.id, due: formatLocalDate(addBusinessDays(firstAnswer.timestamp, 1)),
+      sentAt: settings.pmSent?.[firstAnswer.id] || null } } : result;
   if (customer && Date.parse(customer.timestamp) >= Date.parse(staff.timestamp))
     return dueAction('Follow up with customer', customer.timestamp, 1, 'Customer replied: strike count resets.', now,
       null, [sourceEvent('Customer reply', customer)], '1 business day after the customer reply');
@@ -156,29 +175,30 @@ function planAction(thread, settings, now = new Date()) {
       .map((entry) => sourceEvent('Earlier strike posted', entry))]
   });
   const last = cycle.find((event) => event.action === 'last');
-  if (last) return withPostedStrikes({
+  if (last) return withPm(withPostedStrikes({
     action: 'Strike flow complete — verify CI closure', due: null, tone: 'completed',
     reason: `Final follow-up posted ${new Date(last.timestamp).toLocaleDateString()}. No further strike is scheduled. The thread cannot confirm CI closure.`,
     evidence: [sourceEvent('Final follow-up', last)]
-  });
+  }));
   if (stage === 'first' && strikes.length > 1)
     return withPostedStrikes(review('Multiple strike comments were posted before the two-business-day final follow-up; verify their purpose.'));
   if (strikes.length >= 1)
-    return withPostedStrikes(dueAction('Send last quality response', strikes[strikes.length - 1].timestamp, 2,
+    return withPm(withPostedStrikes(dueAction('Send last quality response', strikes[strikes.length - 1].timestamp, 2,
       'No customer reply after strikes.', now, null, [sourceEvent('Most recent strike', strikes[strikes.length - 1])],
-      '2 business days after the strike'));
+      '2 business days after the strike')));
   const anchor = strikes.length ? strikes[strikes.length - 1] : [...cycle].reverse().find((event) => event.action === 'response');
   if (!anchor) return review('Confirm the latest support response before calculating a strike.');
-  return withPostedStrikes(dueAction('Post first strike comment', anchor.timestamp,
+  return withPm(withPostedStrikes(dueAction('Post first strike comment', anchor.timestamp,
     stage === 'first' ? 3 : 2,
     'No customer reply detected. Log a qualified note on CI.', now, 2,
     [sourceEvent(anchor.id === firstAnswer.id ? 'Your first answer' : stage === 'first'
       ? 'Your additional response' : 'Your latest response', anchor)],
-    stage === 'first' ? '3 business days after your first answer' : '2 business days after your latest response'));
+    stage === 'first' ? '3 business days after your first answer' : '2 business days after your latest response')));
 }
 
 function sourceEvent(label, entry) {
-  return { label, entryId: entry.id, timestamp: entry.timestamp };
+  return { label, entryId: entry.id, timestamp: entry.timestamp,
+    ...(entry.teamReply ? { actor: entry.author } : {}) };
 }
 
 function formatLocalDate(date) {

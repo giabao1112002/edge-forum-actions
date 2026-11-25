@@ -67,6 +67,30 @@ test('profile setup, linked evidence, saved cases and per-profile isolation in t
 
   await get('save-case').handlers.click();
   assert.equal(saved[`cases-${brian}`].length, 1);
+  assert.equal(saved[`cases-${brian}`][0].pm.anchorId, 'answer-101');
+  const pmButton = () => get('result').children.find((child) =>
+    ['I sent the PM', 'Undo PM confirmation'].includes(child.textContent));
+  await pmButton().handlers.click();
+  assert.ok(saved[`thread-${brian}-1234`].pmSent['answer-101']);
+  assert.ok(saved[`cases-${brian}`][0].pm.sentAt);
+  await pmButton().handlers.click();
+  assert.equal(saved[`thread-${brian}-1234`].pmSent['answer-101'], undefined);
+  assert.equal(saved[`cases-${brian}`][0].pm.sentAt, null);
+  context.example = { ...example, entries: [...example.entries,
+    { id: 'comment-leon', type: 'comment', authorId: 'leon', author: 'Leon Tran (WICLOUD CORPORATION)',
+      parentAnswerId: 'answer-101', timestamp: '2026-09-28T10:00:00Z',
+      content: "I just wanted to follow up and check whether Brian's answer has resolved your issue.",
+      excerpt: "I just wanted to follow up and check whether Brian's answer has resolved your issue." }] };
+  await vm.runInContext('loadThread(example.url)', context);
+  const teammateCard = get('entries').children.find((card) => card.children[0].textContent.includes('Leon Tran'));
+  assert.equal(teammateCard.children.at(-2).textContent, 'Teammate action');
+  assert.equal(teammateCard.children.at(-1).value, 'strike');
+  assert.match(get('result').children.map((child) => child.textContent).join(' '), /Teammate action: Leon Tran/);
+  teammateCard.children.at(-1).value = 'response';
+  teammateCard.children.at(-1).handlers.change();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(saved[`thread-${brian}-1234`].actions['comment-leon'], 'response');
+  assert.equal(saved[`cases-${brian}`][0].due, '2026-10-01');
   assert.equal(saved[`cases-${brian}`][0].entries, undefined);
   assert.equal(get('case-count').textContent, 1);
   const findGroup = (title) => get('case-list').children.find((group) => group.children[0].textContent.startsWith(title));

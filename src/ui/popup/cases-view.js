@@ -1,6 +1,6 @@
 // Case-list and Today rendering receive data and mutations explicitly.
-function createCasesView({ document, state, domain, persistCases, renderThread, renderCalendar }) {
-  const { sortCases, caseCategory, caseStatus, todayActivity, caseTitle, postedToday, caseStep } = domain;
+function createCasesView({ document, state, domain, persistCases, renderThread, renderCalendar, setPmStatus }) {
+  const { sortCases, caseCategory, caseStatus, todayActivity, pmActivity, caseTitle, postedToday, caseStep } = domain;
   const openCaseCategories = new Set(['strike', 'close', 'followup']);
   function renderCases() {
     const { cases, supportAuthorId, refreshingCases, profileLoading } = state;
@@ -63,6 +63,8 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
           : { overdue: 'Overdue', today: 'Due today', upcoming: 'Upcoming', completed: 'Completed (verify CI)', neutral: 'Review needed' }[status];
         const siteLabel = item.site === 'devcommunity' ? 'Developer Community' : 'Microsoft Learn';
         summary.textContent = `${item.error ? 'Last known · ' : ''}${label}: ${item.action}${item.due ? ` · ${item.due}` : ''}${item.site ? ` • Source: ${siteLabel}` : ''}`;
+        if (item.lastSupportPost?.teammate)
+          summary.textContent += ` · Teammate: ${item.lastSupportPost.author}${item.lastSupportPost.step ? ` (${item.lastSupportPost.step})` : ' (needs review)'}`;
         const checked = document.createElement('p');
         checked.className = 'hint';
         checked.textContent = `Last checked: ${item.checkedAt ? new Date(item.checkedAt).toLocaleString() : 'never'}${item.error ? ` · Refresh failed: ${item.error}` : ''}`;
@@ -102,7 +104,7 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
   function renderToday() {
     const list = document.getElementById('today-list');
     list.replaceChildren();
-    const work = sortCases(state.cases.filter((item) => todayActivity(item)));
+    const work = sortCases(state.cases.filter((item) => todayActivity(item) || pmActivity(item)));
     if (!work.length) {
       const empty = document.createElement('p');
       empty.className = 'hint';
@@ -113,7 +115,7 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
     for (const item of work) {
       const card = document.createElement('div');
       const activity = todayActivity(item);
-      card.className = `case-item ${activity === 'posted' ? 'completed' : activity}`;
+      card.className = `case-item ${activity === 'posted' ? 'completed' : activity || pmActivity(item)}`;
       const link = document.createElement('a');
       link.href = item.url;
       link.target = '_blank';
@@ -125,16 +127,31 @@ function createCasesView({ document, state, domain, persistCases, renderThread, 
         source.className = 'hint';
         source.textContent = `Source: ${item.site === 'devcommunity' ? 'Developer Community' : 'Microsoft Learn'}`;
       }
+      const pm = pmActivity(item);
+      if (pm) {
+        const detail = document.createElement('p');
+        detail.className = 'step-pending';
+        detail.textContent = `${item.error ? 'Last known: ' : ''}PM customer - Not confirmed. ${pm === 'overdue' ? 'Overdue since' : 'Due today'} ${item.pm.due}.`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'I sent the PM';
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try { await setPmStatus(item, true); }
+          finally { button.disabled = false; }
+        });
+        card.append(detail, button);
+      }
       if (postedToday(item) && item.action !== 'Follow up with customer') {
         const completed = document.createElement('p');
         completed.className = item.lastSupportPost.step ? 'step-complete' : 'hint';
         const step = item.lastSupportPost.step;
         completed.textContent = `${item.error ? 'Last known: ' : ''}${step
-          ? `${step} - Complete (forum post observed${step.startsWith('Close step') || step === 'Answer accepted' ? '; CI closure unverified' : ''})`
+          ? `${step} - Complete (forum post observed${step.startsWith('Close step') || step === 'Answer accepted' ? '; CI closure unverified' : ''})${item.lastSupportPost.teammate ? ` by ${item.lastSupportPost.author}` : ''}`
           : `${item.lastSupportPost.type === 'answer' ? 'Answer' : 'Comment'} posted - step not confirmed`}`;
         card.append(completed);
       }
-      if (activity === 'posted') {
+      if (!activity || activity === 'posted') {
         if (source) card.append(source);
         list.append(card);
         continue;

@@ -1,5 +1,5 @@
 // Rendering only; state and correction persistence belong to the app controller.
-function createThreadView({ document, state, domain, saveAndRender }) {
+function createThreadView({ document, state, domain, saveAndRender, setPmStatus }) {
   const { planAction, scopeThread, inferProcessStage, inferPostAction, caseTitle } = domain;
   const postLink = (id) => `${state.thread.url}#${encodeURIComponent(id.startsWith('question-') ? `${id}-expander` : id)}`;
   function select(choices, selected, onChange) {
@@ -26,6 +26,25 @@ function createThreadView({ document, state, domain, saveAndRender }) {
     deadline.textContent = result.due ? `Calculated due date: ${result.due} (${result.tone})`
       : result.tone === 'completed' ? 'No strike deadline' : 'Date not calculated';
     box.append(heading, deadline);
+    for (const source of result.evidence?.filter((item) => item.actor) || []) {
+      const teammate = document.createElement('p');
+      teammate.textContent = `Teammate action: ${source.actor} — ${source.label}.`;
+      box.append(teammate);
+    }
+    if (result.pm) {
+      const pm = document.createElement('p');
+      pm.textContent = result.pm.sentAt ? `PM confirmed manually: ${new Date(result.pm.sentAt).toLocaleString()}`
+        : `PM customer by ${result.pm.due} (1 business day after your first answer). This cannot be verified from the public thread.`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = result.pm.sentAt ? 'Undo PM confirmation' : 'I sent the PM';
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try { await setPmStatus({ id: state.thread.id, site: state.thread.site || 'learn', pm: result.pm }, !result.pm.sentAt); }
+        finally { button.disabled = false; }
+      });
+      box.append(pm, button);
+    }
     for (const [index, strikeDate] of (result.postedStrikes || []).entries()) {
       const posted = document.createElement('p');
       posted.textContent = `Observed strike ${index + 1} posted: ${strikeDate}`;
@@ -56,7 +75,7 @@ function createThreadView({ document, state, domain, saveAndRender }) {
         link.href = postLink(item.entryId);
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
-        link.textContent = `${item.label}: ${new Date(item.timestamp).toLocaleDateString()}`;
+        link.textContent = `${item.label}${item.actor ? ` by ${item.actor}` : ''}: ${new Date(item.timestamp).toLocaleDateString()}`;
         row.append(link);
         list.append(row);
       }
@@ -121,11 +140,13 @@ function createThreadView({ document, state, domain, saveAndRender }) {
       const excerpt = document.createElement('p');
       excerpt.textContent = entry.excerpt;
       card.append(header, time, excerpt);
-      if (entry.type !== 'question' && entry.authorId === supportAuthorId) {
+      if (entry.type !== 'question' && (entry.authorId === supportAuthorId || entry.teamReply)) {
         const actionLabel = document.createElement('label');
-        actionLabel.textContent = 'Your action';
-        const actionInput = select([['response', 'Response / follow-up'], ['strike', 'Strike comment'],
-          ['last', 'Last quality response'], ['ignore', 'Not part of this process']],
+        actionLabel.textContent = entry.teamReply ? 'Teammate action' : 'Your action';
+        const choices = [['response', 'Response / follow-up'], ['strike', 'Strike comment'],
+          ['last', 'Last quality response'], ['ignore', 'Not part of this process']];
+        if (entry.teamReply) choices.unshift(['review', 'Classify teammate action']);
+        const actionInput = select(choices,
         settings.actions[entry.id] || inferPostAction(entry, scoped.entries, question?.authorId, supportAuthorId,
           settings.actions, thread.site),
         (value) => {

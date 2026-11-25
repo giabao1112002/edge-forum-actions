@@ -61,6 +61,8 @@ summary { cursor: pointer; font-weight: 600; }
 .calendar-legend .observed::before { background: #23804c; }
 .calendar-legend .prediction::before { background: #8695a5; }
 .calendar-legend .overdue::before { background: #c62f27; }
+.calendar-legend .pm-due::before { background: #7c3aed; }
+.calendar-legend .pm-sent::before { background: #23804c; }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-height: 230px; max-height: 350px; overflow-y: auto; border: 1px solid #d6e0eb; border-radius: 6px; background: #fff; }
 .calendar-day { min-width: 0; padding: 0 3px 4px; border-left: 1px solid #e4eaf1; background: #fff; }
 .calendar-day:first-child { border-left: 0; }
@@ -75,6 +77,9 @@ summary { cursor: pointer; font-weight: 600; }
 .calendar-event a { display: block; color: #174a76; font-weight: 700; overflow-wrap: anywhere; }
 .calendar-event span { display: block; overflow-wrap: anywhere; }
 .calendar-event.reply { background: #fff4dc; border-left-color: #c57913; }
+.calendar-event.pm-due { background: #f5f3ff; border-left-color: #7c3aed; }
+.calendar-event.pm-sent { background: #f0fdf4; border-left-color: #23804c; }
+.calendar-event.pm-overdue { background: #fff1ee; border-left-color: #c62f27; }
 .calendar-event.observed { background: #eaf6ee; border-left-color: #23804c; }
 .calendar-event.prediction { background: #f2f4f7; border-left-style: dashed; border-left-color: #8695a5; }
 .calendar-event.overdue, .calendar-event.urgent { background: #ffe9e7; border-left-color: #c62f27; }
@@ -85,6 +90,9 @@ summary { cursor: pointer; font-weight: 600; }
 .calendar-agenda-item a { display: block; font-weight: 600; overflow-wrap: anywhere; }
 .calendar-agenda-item p { margin: 3px 0 0; }
 .calendar-agenda-item.reply { background: #fff4dc; border-left-color: #c57913; }
+.calendar-agenda-item.pm-due { background: #f5f3ff; border-left-color: #7c3aed; }
+.calendar-agenda-item.pm-sent { background: #f0fdf4; border-left-color: #23804c; }
+.calendar-agenda-item.pm-overdue { background: #fff1ee; border-left-color: #c62f27; }
 .calendar-agenda-item.observed { background: #eaf6ee; border-left-color: #23804c; }
 .calendar-agenda-item.prediction { background: #f2f4f7; border-left-style: dashed; border-left-color: #8695a5; }
 .calendar-agenda-item.overdue, .calendar-agenda-item.urgent { background: #ffe9e7; border-left-color: #c62f27; }

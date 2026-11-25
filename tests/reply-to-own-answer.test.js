@@ -71,3 +71,19 @@ test('Teams and Discord notify once for a new reply from a different account on 
   assert.match(teams.requests[0].attachments[0].content.actions[0].url, /#comment-2851445$/);
   assert.match(discord.requests[0].embeds[0].url, /#comment-2851445$/);
 });
+
+test('WICLOUD teammate comment is not sent as a customer reply to Teams or Discord', async () => {
+  const teammate = { id: 'comment-leon', type: 'comment', parentAnswerId: 'answer-13003540',
+    authorId: 'leon', author: 'Leon Tran (WICLOUD CORPORATION)', timestamp: '2026-10-16T04:18:22Z',
+    content: 'Following up on the answer to check whether it resolved your issue.' };
+  const covered = { ...base, entries: [...base.entries, teammate] };
+  assert.equal(scopeThread(covered, profileId).entries.find((entry) => entry.id === teammate.id).customerReply, false);
+  for (const channel of [notifier(createTeamsNotifier,
+    'https://prod-01.westeurope.logic.azure.com/workflows/1234abcd/triggers/manual/paths/invoke?sig=test'),
+  notifier(createDiscordNotifier, 'https://discord.com/api/webhooks/123/test_token')]) {
+    await channel.service.configure(profileId, channel.settings);
+    await channel.service.observe(profileId, base, null, 'learn');
+    await channel.service.observe(profileId, covered, null, 'learn');
+    assert.equal(channel.requests.length, 0);
+  }
+});
